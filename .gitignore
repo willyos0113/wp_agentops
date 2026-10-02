@@ -1,0 +1,37 @@
+# Terraform 工作目錄與 state（state 內含私鑰與密碼明文）
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Terraform 變數檔（存放 master / wp 密碼），範例檔除外
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Terraform 本機覆寫檔與 plan 輸出
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.tfplan
+.terraformrc
+terraform.rc
+
+# EC2 私鑰（由 Terraform 產生於 infra 根目錄）
+*.pem
+*.key
+
+# 應用程式機密
+.env
+.env.*
+!.env.example
+wp-config.php
+
+# 作業系統與編輯器
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
