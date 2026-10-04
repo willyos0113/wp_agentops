@@ -92,7 +92,7 @@ resource "aws_route_table_association" "private_1c" { # 將 Private Subnet(1c) �
 
 # === 安全組(Security Group)設定 === 
 resource "aws_security_group" "web" { # EC2(web server) 的 Security Group
-  name        = "sg-yiweee-web"
+  name        = "yiweee-sg-web"
   description = "Security group for WordPress web server"
   vpc_id      = aws_vpc.yiweee.id
 
@@ -129,7 +129,7 @@ resource "aws_security_group_rule" "web_egress" { # EC2(web server) 的 Security
 }
 
 resource "aws_security_group" "db" { # RDS MySQL 的 Security Group
-  name        = "sg-yiweee-db"
+  name        = "yiweee-sg-db"
   description = "Security group for RDS MySQL"
   vpc_id      = aws_vpc.yiweee.id
 

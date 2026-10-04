@@ -77,7 +77,10 @@
 
 ## 部署資源
 
-- 📖 詳細部署指南：見 `docs/SETUP.md`
-- 🏗️ 項目結構說明：見 `docs/PROJECT_STRUCTURE.md`
-- 🔧 實作調整總結：見 `docs/IMPLEMENTATION_SUMMARY.md`
-- 💻 應用層配置：見 `app/README.md`
+| 文件 | 說明 |
+|------|------|
+| 📖 [快速開始](docs/QUICKSTART.md) | 5 分鐘快速部署指南 |
+| 📚 [詳細部署指南](docs/SETUP.md) | 完整的部署步驟和驗證流程 |
+| 🏗️ [項目結構](docs/PROJECT_STRUCTURE.md) | Terraform 檔案和專案組織說明 |
+| 🔧 [實作調整總結](docs/IMPLEMENTATION_SUMMARY.md) | 本次實作的改進和評分 |
+| 💻 [應用層配置](app/README.md) | WordPress 應用層說明 |

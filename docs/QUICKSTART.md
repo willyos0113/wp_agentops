@@ -115,10 +115,10 @@ terraform plan -json | jq '.resource_changes[] | select(.change.actions[] | sele
 
 ## 📚 更多信息
 
-- 詳細部署指南：`docs/SETUP.md`
-- 項目架構：`docs/PROJECT_STRUCTURE.md`
-- 實作調整：`docs/IMPLEMENTATION_SUMMARY.md`
-- WordPress 應用層：`app/README.md`
+- [詳細部署指南](SETUP.md) - 完整的部署步驟和驗證流程
+- [項目架構](PROJECT_STRUCTURE.md) - Terraform 檔案和專案組織說明
+- [實作調整](IMPLEMENTATION_SUMMARY.md) - 代碼質量和安全性改進
+- [WordPress 應用層](../app/README.md) - 應用層配置說明
 
 ---
 

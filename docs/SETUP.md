@@ -12,18 +12,21 @@
 ## 步驟 1: 準備環境
 
 ### 1.1 獲取你的公網 IP
+
 ```bash
 curl -s https://checkip.amazonaws.com
 # 結果例如: 203.0.113.10
 ```
 
 ### 1.2 複製 terraform.tfvars
+
 ```bash
 cd infra/
 cp terraform.tfvars.example terraform.tfvars
 ```
 
 ### 1.3 編輯 terraform.tfvars
+
 編輯 `infra/terraform.tfvars`，設置以下值：
 
 ```hcl
@@ -44,6 +47,7 @@ terraform plan
 ```
 
 檢查計劃輸出，確認資源配置符合預期：
+
 - 1 個 VPC
 - 3 個 Subnet (1 public, 2 private)
 - 1 個 IGW 和 2 個 Route Table
@@ -58,6 +62,7 @@ terraform apply
 ```
 
 部署完成後，終端會輸出：
+
 - EC2 公網 IP
 - RDS endpoint
 - SSH 命令
@@ -67,6 +72,7 @@ terraform apply
 ## 步驟 4: 驗證架構
 
 ### 驗證 1: 存取 WordPress
+
 ```bash
 # 使用輸出中的 WordPress URL（或手動拼接）
 curl -I http://<web_ec2_public_ip>
@@ -74,6 +80,7 @@ curl -I http://<web_ec2_public_ip>
 ```
 
 ### 驗證 2: 確認 RDS 無外網存取
+
 ```bash
 # 從本機嘗試連接 RDS（應該逾時）
 mysql -h <rds_endpoint> -u master -p
@@ -83,6 +90,7 @@ mysql -h <rds_endpoint> -u master -p
 ### 驗證 3: 確認 Web 可連接 DB
 
 #### 方式 A: 使用 SSH（傳統方式）
+
 ```bash
 # SSH 進入 Web 伺服器
 ssh -i infra/yiweee.pem ubuntu@<web_ec2_public_ip>
@@ -94,6 +102,7 @@ mysql -h <rds_endpoint> -u wp -p
 ```
 
 #### 方式 B: 使用 SSM Session Manager（推薦，更安全）
+
 ```bash
 # 查詢 EC2 實例 ID（從 terraform output 或 AWS Console）
 aws ec2 describe-instances --filters "Name=tag:Name,Values=ec2-yiweee" --query 'Reservations[0].Instances[0].InstanceId'
@@ -106,6 +115,7 @@ mysql -h <rds_endpoint> -u wp -p
 ```
 
 ### 驗證 4: 完成 WordPress 安裝
+
 1. 開啟瀏覽器，訪問 `http://<web_ec2_public_ip>`
 2. 完成 WordPress 初始設置
 3. 發佈一篇測試文章
@@ -113,6 +123,7 @@ mysql -h <rds_endpoint> -u wp -p
 ### 驗證 5: 驗證資料持久化
 
 #### 方式 A: 使用 SSH
+
 ```bash
 # SSH 進入 Web 伺服器
 ssh -i infra/yiweee.pem ubuntu@<web_ec2_public_ip>
@@ -124,6 +135,7 @@ mysql -h <rds_endpoint> -u wp -p<db_wp_password> wordpress
 ```
 
 #### 方式 B: 使用 SSM Session Manager
+
 ```bash
 # 啟動 SSM 會話
 aws ssm start-session --target <instance-id> --region ap-northeast-1
@@ -147,18 +159,23 @@ terraform destroy
 ## 故障排除
 
 ### 問題: RDS 無法存取
+
 **檢查清單**:
+
 1. 確認 Security Group 規則正確
 2. 確認 RDS 不是公開的 (`publicly_accessible = false`)
 3. 檢查 VPC 和 Subnet 配置
 
 ### 問題: WordPress 無法連接資料庫
+
 1. SSH 進入 EC2 檢查 logs: `tail -f /var/log/apache2/error.log`
 2. 驗證 MySQL 用戶是否建立: `mysql -h <endpoint> -u master -p`
 3. 檢查 `wp-config.php` 中的數據庫密碼是否正確
 
 ### 問題: user_data 執行失敗
+
 檢查 EC2 用戶數據日誌：
+
 ```bash
 ssh -i infra/yiweee.pem ubuntu@<web_ec2_public_ip>
 tail -f /var/log/cloud-init-output.log
@@ -170,3 +187,9 @@ tail -f /var/log/cloud-init-output.log
 - **Terraform 狀態**: `*.tfstate` 檔案存儲基礎設施狀態，也已排除於 git 之外
 - **架構檔案**: `user_data.sh` 包含 WordPress 和 MySQL 配置腳本
 
+## 相關文件
+
+- [快速開始指南](QUICKSTART.md) - 5 分鐘快速部署
+- [項目結構說明](PROJECT_STRUCTURE.md) - Terraform 檔案詳解
+- [實作調整總結](IMPLEMENTATION_SUMMARY.md) - 代碼質量和安全性改進
+- [應用層配置](../app/README.md) - WordPress 自定義指南

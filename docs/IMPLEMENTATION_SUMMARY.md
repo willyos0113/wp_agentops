@@ -157,8 +157,14 @@
 ## ⚠️ 注意事項
 
 - `.gitignore` 已包含機密檔案過濾 (*.pem, *.tfstate, *.tfvars)
-- 密碼存儲在 user_data 中（已知取捨，見 README 機密管理部分）
+- 密碼存儲在 user_data 中（已知取捨，見 [README 機密管理部分](../README.md)）
 - 部署時間約 10-15 分鐘
 - AWS 帳戶需有足夠權限建立 VPC、EC2、RDS 資源
 - AWS CLI profile "course" 需預先配置
+
+## 相關文檔
+
+- [快速開始指南](QUICKSTART.md) - 5 分鐘快速部署
+- [詳細部署指南](SETUP.md) - 完整步驟和驗證
+- [項目結構說明](PROJECT_STRUCTURE.md) - Terraform 檔案詳解
 

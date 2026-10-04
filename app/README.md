@@ -2,6 +2,13 @@
 
 此目錄用於存放 WordPress 應用相關的配置和自定義。
 
+## 快速導航
+
+- [快速開始](../docs/QUICKSTART.md) - 5 分鐘快速部署
+- [詳細部署指南](../docs/SETUP.md) - 完整部署步驟
+- [項目結構說明](../docs/PROJECT_STRUCTURE.md) - Terraform 檔案詳解
+- [架構規劃](../README.md) - 核心架構設計
+
 ## 結構
 
 ```
