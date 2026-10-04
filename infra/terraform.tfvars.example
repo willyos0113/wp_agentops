@@ -1,1 +1,22 @@
+aws_region = "ap-northeast-1"
+
+vpc_cidr                = "10.0.0.0/16"
+public_subnet_cidr      = "10.0.1.0/24"
+private_subnet_1a_cidr  = "10.0.2.0/24"
+private_subnet_1c_cidr  = "10.0.3.0/24"
+
+# Replace with your public IP (obtain from: curl -s https://checkip.amazonaws.com)
+# Format: "203.0.113.10/32" (with /32 for single IP)
 admin_cidr = "203.0.113.10/32"
+
+# Master password for RDS (minimum 8 characters, alphanumeric and special chars)
+# Make this strong and unique!
+db_master_password = "ChangeMe!Master123"
+
+# WordPress database user password
+# Make this strong and unique!
+db_wp_password = "ChangeMe!Wordpress456"
+
+instance_type       = "t3.micro"
+db_instance_class   = "db.t3.micro"
+db_storage_size     = 20
