@@ -46,7 +46,7 @@ resource "aws_instance" "web" { # 建立 WordPress EC2 instance
     db_user            = "wp"
     db_password        = var.db_wp_password
     db_master_password = var.db_master_password
-    db_host            = aws_db_instance.yiweee.endpoint
+    db_host            = aws_db_instance.yiweee.address
   })) # 傳送給 aws 腳本，記得用 base64 編碼，確保特殊字元在 protocol 解析文本時不會被破壞
   iam_instance_profile   = aws_iam_instance_profile.web.name # 讓 EC2 可以使用 IAM Role 
 

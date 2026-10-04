@@ -81,15 +81,15 @@ WPEOF
 # === 等待 RDS 可用，並建立 WordPress 資料庫使用者 ===
 # Wait for RDS to be available
 echo "Waiting for RDS to be available..."
-until mysql -h "${db_host}" -u master -p"${db_master_password}" -e "SELECT 1" > /dev/null 2>&1; do
+until mysql -h "${db_host}" -P 3306 -u master -p"${db_master_password}" -e "SELECT 1" > /dev/null 2>&1; do
   echo "Retrying database connection..."
   sleep 10
 done
 
 # Create WordPress user
-mysql -h "${db_host}" -u master -p"${db_master_password}" << MYSQLEOF
-CREATE USER IF NOT EXISTS '${db_user}'@'10.0.%.%' IDENTIFIED BY '${db_password}';
-GRANT ALL PRIVILEGES ON ${db_name}.* TO '${db_user}'@'10.0.%.%';
+mysql -h "${db_host}" -P 3306 -u master -p"${db_master_password}" << MYSQLEOF
+CREATE USER IF NOT EXISTS '${db_user}'@'10.0.%' IDENTIFIED BY '${db_password}';
+GRANT ALL PRIVILEGES ON ${db_name}.* TO '${db_user}'@'10.0.%';
 FLUSH PRIVILEGES;
 MYSQLEOF
 
