@@ -31,6 +31,12 @@ apt install -y \
 # Enable Apache modules
 a2enmod rewrite
 a2enmod ssl
+# 將 /var/www/ 的 AllowOverride None 改為 AllowOverride All，允許 .htaccess 生效
+# (解決 WordPress 後台連結無法正常跳轉的問題)
+sed -i << 'SEDEOF'
+/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/
+SEDEOF
+/etc/apache2/apache2.conf
 
 # === 安裝並設置 WordPress ===
 # Download and configure WordPress
@@ -53,7 +59,7 @@ cat > /var/www/html/wp-config.php << 'WPEOF'
 define('DB_NAME', '${db_name}');
 define('DB_USER', '${db_user}');
 define('DB_PASSWORD', '${db_password}');
-define('DB_HOST', '${db_host}');
+define('DB_HOST', '${db_host}:3306');
 define('DB_CHARSET', 'utf8mb4');
 define('DB_COLLATE', '');
 

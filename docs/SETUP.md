@@ -129,9 +129,7 @@ mysql -h <rds_endpoint> -u wp -p
 ssh -i infra/yiweee.pem ubuntu@<web_ec2_public_ip>
 
 # 查詢 WordPress 文章
-mysql -h <rds_endpoint> -u wp -p<db_wp_password> wordpress
-> SELECT post_title FROM wp_posts WHERE post_type='post';
-# 應該看到你發佈的文章標題
+mysql -h <rds_endpoint> -u wp -p<db_wp_password> wordpress -e "SELECT post_title FROM wp_posts WHERE post_type='post';"
 ```
 
 #### 方式 B: 使用 SSM Session Manager
