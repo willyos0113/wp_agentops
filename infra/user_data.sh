@@ -33,10 +33,7 @@ a2enmod rewrite
 a2enmod ssl
 # 將 /var/www/ 的 AllowOverride None 改為 AllowOverride All，允許 .htaccess 生效
 # (解決 WordPress 後台連結無法正常跳轉的問題)
-sed -i << 'SEDEOF'
-/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/
-SEDEOF
-/etc/apache2/apache2.conf
+sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf
 
 # === 安裝並設置 WordPress ===
 # Download and configure WordPress
