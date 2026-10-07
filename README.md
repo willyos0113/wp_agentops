@@ -115,215 +115,235 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 ## 架構說明
 
-### 整體系統架構
+基於 P0-2 的穩定基礎，P1-2 在 EC2 + RDS 上疊加**監控與自動化層**。核心是將系統觀測數據（日誌、指標）集中到 CloudWatch，並透過 AmazonQ 進行智能分析、Lambda 實現自動響應。
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    AWS CloudWatch 監控與分析系統                     │
-│                                                                     │
-│ ┌──────────────────────────────────────────────────────────────┐   │
-│ │ CloudWatch（集中監控樞紐）                                   │   │
-│ │ ├─ Metrics：系統指標收集與聚合                               │   │
-│ │ ├─ Logs：多來源日誌集中存儲                                 │   │
-│ │ ├─ Alarms：告警規則與觸發                                   │   │
-│ │ └─ Dashboards：統一可視化展板                               │   │
-│ └──────────────────────────────────────────────────────────────┘   │
-│                        ▲                    ▲                       │
-│                        │                    │                       │
-│            ┌───────────┴────────┐  ┌────────┴──────────┐            │
-│            │                    │  │                   │            │
-│ ┌──────────┴──────────┐ ┌──────┴──┴────────┐ ┌────────┴──────────┐ │
-│ │ EC2: CloudWatch    │ │ AmazonQ          │ │ Lambda (後期)     │ │
-│ │ Agent + Web/DB     │ │ ├─ 日誌分析      │ │ ├─ 告警響應       │ │
-│ │                    │ │ ├─ 故障診斷      │ │ ├─ 自動化修復     │ │
-│ │ ├─ CPU/Memory/Disk │ │ └─ 優化建議      │ │ └─ 通知發送       │ │
-│ │ ├─ 應用日誌        │ │                  │ │                   │ │
-│ │ ├─ 系統日誌        │ │                  │ │                   │ │
-│ │ └─ 自訂指標        │ │ (AI 代理分析)   │ │ (自動化處理)      │ │
-│ └──────────────────────┘ └──────────────────┘ └───────────────────┘ │
-│            ▲                                                         │
-│            │                                                         │
-│ ┌──────────┴──────────────────────────────────────────────────────┐ │
-│ │ RDS MySQL（Web / DB 日誌不在 RDS，通過 Agent 轉送）           │ │
-│ └────────────────────────────────────────────────────────────────┘ │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+### 監控基礎設定
 
-### 核心組件與責務
+P1-2 **不改變** P0-2 的網路、計算、安全組架構，僅在以下方向擴展：
 
-#### 1️⃣ **CloudWatch Agent（EC2 上部署）**
-- **安裝位置**：ec2-yiweee（WordPress 主機）
-- **收集項目**：
-  - 系統指標：CPU、記憶體、磁碟、網路 I/O
-  - 應用日誌：WordPress error.log、access.log
-  - 系統日誌：/var/log/syslog、/var/log/auth.log
-  - 自訂指標：WordPress 插件監控、RDS 連線狀態
+1. **IAM 角色擴展**
+   - P0-2 中 EC2 已有 `AmazonSSMManagedInstanceCore` 權限（SSM 連線）
+   - P1-2 新增：`CloudWatchAgentServerPolicy`（允許 Agent 寫入 Logs/Metrics）
+   - Terraform 文件：`compute.tf` 中的 `aws_iam_role_policy_attachment`
 
-- **轉送目標**：CloudWatch Logs（獨立的 Log Group）
-
-#### 2️⃣ **CloudWatch Logs（日誌聚合）**
-- **Log Groups**：
-  - `/aws/ec2/wordpress` - WordPress 應用日誌
-  - `/aws/ec2/system` - EC2 系統日誌
-  - `/aws/rds/mysql` - RDS 慢查詢日誌（可選）
-
-- **Metric Filters**：基於日誌內容創建自訂指標
-  - ERROR 日誌計數
-  - DB 連線失敗計數
-
-#### 3️⃣ **CloudWatch Metrics & Alarms**
-- **系統指標告警**：
-  - CPU > 80% → 發出告警
-  - 記憶體 > 90% → 發出告警
-  - 磁碟空間 < 10% → 發出告警
-
-- **應用層告警**：
-  - ERROR 日誌數 > 10（5 分鐘內）
-  - DB 連線失敗次數 > 5
-
-#### 4️⃣ **CloudWatch Dashboards（實時可視化）**
-統一儀表板展示：
-- WordPress 運行狀態（快速診斷）
-- RDS 連線狀態與查詢性能
-- 錯誤日誌趨勢
-- 系統資源利用率
-- 告警歷史與狀態
-
-#### 5️⃣ **AmazonQ（AI 代理分析）** 
-- **使用場景**：
-  - 詢問 AmazonQ 分析異常日誌
-  - 快速診斷 500 錯誤原因
-  - 獲取優化建議
-  - 理解複雜的錯誤堆棧
-
-- **輸入來源**：CloudWatch Logs 日誌內容
-
-#### 6️⃣ **Lambda Functions（後期自動化）**
-- **觸發方式**：CloudWatch Alarms → SNS → Lambda
-- **處理邏輯**：
-  - 高 CPU 警告時發送郵件通知
-  - DB 連線失敗時記錄詳細診斷信息
-  - 日誌異常時調用自動修復腳本
+2. **CloudWatch 日誌群組預創建**
+   - 3 個獨立的 Log Group：
+     - `/aws/ec2/wordpress/application` - WordPress 應用日誌（error.log、access.log）
+     - `/aws/ec2/wordpress/system` - EC2 系統日誌（syslog、auth.log）
+     - `/aws/rds/mysql/slowquery` - RDS 慢查詢日誌（可選，Phase 2）
+   - Terraform 文件：新增 `monitoring.tf`
 
 ---
 
-### 數據流向與工作流程
+### 監控資源配置
 
-#### **正常運行流程**
-```
-1. CloudWatch Agent 定期收集指標
-   ↓
-2. 指標上報到 CloudWatch Metrics
-   ↓
-3. Dashboards 實時顯示系統狀態
-   ↓
-4. 日誌寫入 CloudWatch Logs
-   ↓
-5. Metric Filters 解析日誌，生成自訂指標
+#### **1. CloudWatch Agent 部署與配置**
+
+**部署位置**：ec2-yiweee（WordPress 主機）
+
+**安裝方式**（集成至 user_data）：
+```bash
+# user_data.sh 新增段落
+1. 下載 CloudWatch Agent
+2. 生成 Agent 配置文件（JSON）
+3. 啟動 Agent 服務
+4. 驗證 Agent 是否上報數據
 ```
 
-#### **告警與診斷流程**
-```
-1. 指標超過閾值（如 CPU > 80%）
-   ↓
-2. CloudWatch Alarm 觸發
-   ↓
-3. 向 SNS 發送通知（郵件/簡訊）
-   ↓
-4. 人工登入 CloudWatch 查看日誌
-   ↓
-5. 詢問 AmazonQ 分析根本原因
-   ↓
-6. 根據建議進行手動處置或觸發 Lambda 自動修復
-```
+**Agent 收集的數據**：
+- **系統指標**（每分鐘上報）：
+  - `CPUUtilization` - CPU 使用率（%）
+  - `MemoryUtilization` - 記憶體使用率（%）
+  - `DiskUsed` - 磁碟使用量（GB）
+  - `NetworkIn/NetworkOut` - 網路流量
+
+- **應用日誌**（即時轉送）：
+  - WordPress error.log → `/aws/ec2/wordpress/application`
+  - WordPress access.log → `/aws/ec2/wordpress/application`
+
+- **系統日誌**（即時轉送）：
+  - /var/log/syslog → `/aws/ec2/wordpress/system`
+  - /var/log/auth.log → `/aws/ec2/wordpress/system`
+
+- **自訂指標**（基於日誌解析）：
+  - 每分鐘統計 ERROR 日誌出現次數
+  - 每分鐘統計 DB 連線失敗次數
+
+#### **2. CloudWatch Logs 配置**
+
+**Metric Filters 規則**（在 Log Group 中設置）：
+
+| Filter 名稱 | Log Group | 篩選模式 | 生成指標 | 閾值 |
+|-----------|----------|--------|--------|------|
+| `ErrorLogCount` | `/aws/ec2/wordpress/application` | `[ERROR]` 或 `ERROR` | `ErrorCount` | > 10（5min） |
+| `DBConnectionFailed` | `/aws/ec2/wordpress/application` | `database connection failed` 或 `DB Error` | `DBFailCount` | > 5（5min） |
+| `HTTP500Error` | `/aws/ec2/wordpress/application` | `HTTP/1.1" 500` | `HTTP500Count` | > 3（5min） |
 
 ---
 
-### 與 P0-2 的關係
+### 告警與儀表板設定
 
-| 項目 | P0-2（基礎架構） | P1-2（監控擴展） | 變更內容 |
-|------|----------------|----------------|--------|
-| **EC2** | ✅ 存在 | ✅ 擴展 | 新增 CloudWatch Agent |
-| **RDS** | ✅ 存在 | ✅ 監控 | 啟用慢查詢日誌（可選） |
-| **IAM 角色** | ✅ SSM 基礎 | ✅ 擴展 | 新增 CloudWatch 寫入權限 |
-| **日誌聚合** | ❌ 無 | ✅ 新增 | CloudWatch Logs |
-| **告警系統** | ❌ 無 | ✅ 新增 | CloudWatch Alarms + SNS |
-| **可視化** | ❌ 無 | ✅ 新增 | CloudWatch Dashboards |
-| **AI 分析** | ❌ 無 | ✅ 新增 | AmazonQ（可選） |
-| **自動化** | ❌ 無 | ⏳ 計畫 | Lambda（Phase 3） |
+#### **3. CloudWatch Alarms 配置**
+
+基於上述指標，建立告警規則：
+
+| 告警名稱 | 監控指標 | 條件 | 觸發動作 | 優先度 |
+|---------|--------|------|---------|------|
+| `CPUHigh` | `CPUUtilization` | > 80%（連續 2 個 5min） | SNS 通知 | 🔴 High |
+| `MemoryHigh` | `MemoryUtilization` | > 90%（連續 2 個 5min） | SNS 通知 | 🔴 High |
+| `DiskFull` | `DiskUsed` | > 90%（連續 1 個 5min） | SNS 通知 | 🟠 Medium |
+| `ErrorSpike` | `ErrorCount` | > 10（連續 1 個 5min） | SNS + Lambda 通知 | 🟠 Medium |
+| `DBConnFailed` | `DBFailCount` | > 5（連續 1 個 5min） | SNS + Lambda 通知 | 🔴 High |
+
+**SNS 話題**：
+- 話題名稱：`cloudwatch-alerts-yiweee`
+- 訂閱方式：郵件（維護人員信箱）
+- 後期擴展：Lambda 函數
+
+#### **4. CloudWatch Dashboards 配置**
+
+**儀表板名稱**：`WordPress-RDS-Monitoring`
+
+**版面配置**：
+```
+┌─────────────────────────────────────────────────┐
+│ 系統健康狀態（實時）                             │
+├──────────┬──────────┬──────────┬──────────────┤
+│ CPU %    │ Mem %    │ Disk %   │ Network In   │
+│ [00.5%]  │ [45.2%]  │ [62.1%]  │ [12.3 MB/s]  │
+└──────────┴──────────┴──────────┴──────────────┘
+
+┌─────────────────────────────────────────────────┐
+│ 應用層指標（Last 1 Hour）                       │
+├──────────┬──────────┬──────────┬──────────────┤
+│ ERROR日誌│ DB 連線  │ HTTP 500 │ 警告次數     │
+│ 線圖     │ 線圖     │ 線圖     │ 數字展示     │
+└──────────┴──────────┴──────────┴──────────────┘
+
+┌─────────────────────────────────────────────────┐
+│ 告警歷史（Last 24 Hours）                       │
+│ [Recent Alarms Table]                          │
+└─────────────────────────────────────────────────┘
+```
+
+**小部件配置**：
+- 系統指標：4 個 Number widget（CPU、Memory、Disk、Network）
+- 應用層：3 個 Line graph（ERROR、DB Fail、HTTP500）
+- 告警狀態：1 個 Alarm Status widget
 
 ---
 
-### 部署策略
+### 日誌與指標整合
 
-#### **Phase 1：基礎監控（Week 1-2）**
-```
-修改 IAM 角色 → 部署 CloudWatch Agent → 配置 Logs & Metrics → 建立 Dashboards
-```
+#### **5. 日誌分析工作流**
 
-**Terraform 變更**：
-- `compute.tf`：IAM 角色新增權限
-- 新增 `monitoring.tf`：Agent 配置
-- `user_data.sh`：自動部署 Agent
-
-#### **Phase 2：日誌分析（Week 3-4）**
+**正常情況**：
 ```
-配置 Metric Filters → 設置告警規則 → 整合 AmazonQ
-```
-
-**Terraform 變更**：
-- `monitoring.tf`：告警和過濾器配置
-
-#### **Phase 3：自動化響應（Week 5-6）**
-```
-創建 Lambda 函數 → SNS 整合 → 自動化流程測試
+EC2 應用日誌
+  ↓
+CloudWatch Agent（local buffer）
+  ↓
+CloudWatch Logs（Log Stream）
+  ↓
+Metric Filter 解析
+  ↓
+CloudWatch Metrics（自訂指標）
+  ↓
+告警判斷 & 儀表板顯示
 ```
 
-**Terraform 變更**：
-- 新增 `automation.tf`：Lambda 和 SNS 配置
+**故障定位工作流**（檢核點 2 驗證）：
+```
+1. 發現告警（如 HTTP500 > 3）
+  ↓
+2. 打開 CloudWatch → Logs → 查詢日誌
+  ↓
+3. CloudWatch Insights 執行查詢
+   SQL: fields @timestamp, @message 
+        | filter @message like /500/ 
+        | stats count() by @message
+  ↓
+4. 定位具體的錯誤信息和堆棧
+  ↓
+5. 登入 EC2（SSM Session Manager）查看應用狀態
+```
+
+#### **6. AmazonQ 整合（Phase 2）**
+
+**使用場景**：
+- 將 CloudWatch Logs 查詢結果複製給 AmazonQ
+- 詢問："這個 WordPress 500 錯誤是什麼原因？"
+- AmazonQ 分析日誌並給出根因診斷
+
+**配置細節**：
+- AmazonQ Web Experience 或 IDE 插件
+- 登入 AWS Console 無需額外配置
+- 實踐中直接使用（無 Terraform 基礎設施）
 
 ---
 
-### 技術棧詳情
+### 自動化與凭證管理
 
-| 元件 | 服務 | 用途 | 狀態 |
-|------|------|------|------|
-| **監控代理** | CloudWatch Agent | 指標與日誌收集 | Phase 1 |
-| **日誌存儲** | CloudWatch Logs | 中央日誌倉庫 | Phase 1 |
-| **指標聚合** | CloudWatch Metrics | 數據聚合與查詢 | Phase 1 |
-| **實時展示** | CloudWatch Dashboards | 統一可視化 | Phase 1 |
-| **告警引擎** | CloudWatch Alarms | 條件觸發 | Phase 2 |
-| **通知服務** | SNS | 郵件/簡訊通知 | Phase 2 |
-| **AI 分析** | AmazonQ | 日誌分析與診斷 | Phase 2 |
-| **自動化** | Lambda | 告警響應與修復 | Phase 3 |
+#### **7. Lambda 自動化（Phase 3，可選）**
+
+**觸發邏輯**：
+```
+CloudWatch Alarm 觸發
+  ↓
+SNS Topic 發送通知
+  ↓
+Lambda Function 訂閱 SNS
+  ↓
+根據告警類型執行不同邏輯：
+  - 高 CPU：記錄診斷信息，發送郵件
+  - DB 連線失敗：嘗試重新連線，記錄日誌
+  - 日誌異常：自動調用修復腳本
+```
+
+**Lambda 環境變數**：
+- `SNS_TOPIC_ARN` - 告警通知話題
+- `DB_ENDPOINT` - RDS 端點
+- `LOG_GROUP_NAME` - CloudWatch Log Group
+
+#### **8. 凭證管理**
+
+P1-2 引入的新凭證：
+- **CloudWatch Agent 配置檔**：存儲在 EC2`/opt/aws/amazon-cloudwatch-agent/` 目錄（不涉及密鑰）
+- **SNS Topic ARN**：存儲在 Terraform variables
+- **Lambda 執行角色**：IAM 角色（Phase 3 新增）
+
+**敏感資訊排除**：
+- 新增 `.gitignore` 條目（如需本地配置文件）
+- SNS 郵件地址參數化至 `terraform.tfvars`
+- Lambda 密鑰透過 AWS Secrets Manager（後期優化）
 
 ---
 
-### 檢核點達成策略
+### Terraform 文件結構
 
-| 檢核點 | 對應 Phase | 驗證方法 |
-|------|----------|--------|
-| **1. Agent 讀取日誌/健康狀態** | Phase 1 | CloudWatch Logs 能看到實時日誌 |
-| **2. 定位故障（500 or DB 連不上）** | Phase 2 | 人工製造故障，通過日誌查詢定位 |
-| **3. 完整示範偵測→判讀→處置** | Phase 3 | 記錄告警觸發→AmazonQ 診斷→Lambda 修復的完整流程 |
-| **4. Agent 在 AWS 上運行** | Phase 1 | Agent 部署在 EC2 上，CloudWatch 見到指標 |
+**現有文件**（P0-2）：
+- `network.tf` - VPC、Subnet、IGW、Route Table、Security Group
+- `compute.tf` - EC2、RDS、IAM、Key Pair
+- `variables.tf` - 變數定義
+- `outputs.tf` - 輸出值
+- `user_data.sh` - EC2 初始化腳本
+
+**新增文件**（P1-2）：
+- `monitoring.tf` - CloudWatch Agent、Logs、Metrics、Alarms、Dashboards
+- `automation.tf`（Phase 3）- Lambda、SNS、事件規則
+
+**修改文件**：
+- `compute.tf` - IAM 角色新增 CloudWatchAgentServerPolicy
+- `user_data.sh` - 新增 Agent 安裝和配置邏輯
+- `terraform.tfvars` - 新增告警郵箱、閾值等參數
 
 ---
 
-### 預期成果
+### 檢核點驗證方法
 
-✅ **Phase 1 完成後**：
-- CloudWatch 實時展示 WordPress + RDS 健康狀態
-- 所有日誌自動轉送到 CloudWatch Logs
-- 儀表板清晰展示系統瓶頸
-
-✅ **Phase 2 完成後**：
-- 故障自動告警（郵件/簡訊）
-- AmazonQ 快速定位問題根因
-- 建立常見故障的診斷手冊
-
-✅ **Phase 3 完成後**：
-- 高 CPU 自動降級或通知
-- DB 連線失敗自動重試
-- 完全自動化的故障響應流程
+| 檢核點 | 驗證步驟 | 預期結果 |
+|------|--------|--------|
+| **1. Agent 讀取日誌/健康狀態** | 登入 CloudWatch → Logs → 查看 Log Stream | 能看到實時的應用和系統日誌 |
+| **2. 定位故障（500 or DB 連不上）** | 故意停止 RDS / 製造 WordPress 錯誤，在 Logs 中查詢 | 能在日誌中找到明確的錯誤信息和堆棧 |
+| **3. 完整示範偵測→判讀→處置** | 記錄告警觸發 → AmazonQ 分析 → 執行修復 的完整過程 | 整個流程的截圖和日誌紀錄 |
+| **4. Agent 在 AWS 上運行** | 登入 CloudWatch → Metrics → Browse metrics → 選擇 CWAgent namespace | 能看到 cpu、mem、disk 等指標 |
