@@ -2,6 +2,10 @@
 
 ---
 
+## 目標
+
+- 實現 EC2 + RDS 的 web/db 分離架構，並完成下方檢核點項目。
+
 ## 核心檢核點
 
 1. VPC 切出 public / private 兩個 subnet
@@ -97,6 +101,11 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 ---
 
+## 目標
+
+- 以現有 P0-2 架構為基礎。
+- 目的：實現 cloudwatch + amazonQ 完成上述檢核點項目。
+
 ## 核心檢核點
 
 1. Agent 能讀取 Web／DB 的日誌或健康狀態
@@ -105,3 +114,216 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 4. Agent 本身也跑在 AWS 上（EC2 或 Lambda），非只在本機執行
 
 ## 架構說明
+
+### 整體系統架構
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    AWS CloudWatch 監控與分析系統                     │
+│                                                                     │
+│ ┌──────────────────────────────────────────────────────────────┐   │
+│ │ CloudWatch（集中監控樞紐）                                   │   │
+│ │ ├─ Metrics：系統指標收集與聚合                               │   │
+│ │ ├─ Logs：多來源日誌集中存儲                                 │   │
+│ │ ├─ Alarms：告警規則與觸發                                   │   │
+│ │ └─ Dashboards：統一可視化展板                               │   │
+│ └──────────────────────────────────────────────────────────────┘   │
+│                        ▲                    ▲                       │
+│                        │                    │                       │
+│            ┌───────────┴────────┐  ┌────────┴──────────┐            │
+│            │                    │  │                   │            │
+│ ┌──────────┴──────────┐ ┌──────┴──┴────────┐ ┌────────┴──────────┐ │
+│ │ EC2: CloudWatch    │ │ AmazonQ          │ │ Lambda (後期)     │ │
+│ │ Agent + Web/DB     │ │ ├─ 日誌分析      │ │ ├─ 告警響應       │ │
+│ │                    │ │ ├─ 故障診斷      │ │ ├─ 自動化修復     │ │
+│ │ ├─ CPU/Memory/Disk │ │ └─ 優化建議      │ │ └─ 通知發送       │ │
+│ │ ├─ 應用日誌        │ │                  │ │                   │ │
+│ │ ├─ 系統日誌        │ │                  │ │                   │ │
+│ │ └─ 自訂指標        │ │ (AI 代理分析)   │ │ (自動化處理)      │ │
+│ └──────────────────────┘ └──────────────────┘ └───────────────────┘ │
+│            ▲                                                         │
+│            │                                                         │
+│ ┌──────────┴──────────────────────────────────────────────────────┐ │
+│ │ RDS MySQL（Web / DB 日誌不在 RDS，通過 Agent 轉送）           │ │
+│ └────────────────────────────────────────────────────────────────┘ │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 核心組件與責務
+
+#### 1️⃣ **CloudWatch Agent（EC2 上部署）**
+- **安裝位置**：ec2-yiweee（WordPress 主機）
+- **收集項目**：
+  - 系統指標：CPU、記憶體、磁碟、網路 I/O
+  - 應用日誌：WordPress error.log、access.log
+  - 系統日誌：/var/log/syslog、/var/log/auth.log
+  - 自訂指標：WordPress 插件監控、RDS 連線狀態
+
+- **轉送目標**：CloudWatch Logs（獨立的 Log Group）
+
+#### 2️⃣ **CloudWatch Logs（日誌聚合）**
+- **Log Groups**：
+  - `/aws/ec2/wordpress` - WordPress 應用日誌
+  - `/aws/ec2/system` - EC2 系統日誌
+  - `/aws/rds/mysql` - RDS 慢查詢日誌（可選）
+
+- **Metric Filters**：基於日誌內容創建自訂指標
+  - ERROR 日誌計數
+  - DB 連線失敗計數
+
+#### 3️⃣ **CloudWatch Metrics & Alarms**
+- **系統指標告警**：
+  - CPU > 80% → 發出告警
+  - 記憶體 > 90% → 發出告警
+  - 磁碟空間 < 10% → 發出告警
+
+- **應用層告警**：
+  - ERROR 日誌數 > 10（5 分鐘內）
+  - DB 連線失敗次數 > 5
+
+#### 4️⃣ **CloudWatch Dashboards（實時可視化）**
+統一儀表板展示：
+- WordPress 運行狀態（快速診斷）
+- RDS 連線狀態與查詢性能
+- 錯誤日誌趨勢
+- 系統資源利用率
+- 告警歷史與狀態
+
+#### 5️⃣ **AmazonQ（AI 代理分析）** 
+- **使用場景**：
+  - 詢問 AmazonQ 分析異常日誌
+  - 快速診斷 500 錯誤原因
+  - 獲取優化建議
+  - 理解複雜的錯誤堆棧
+
+- **輸入來源**：CloudWatch Logs 日誌內容
+
+#### 6️⃣ **Lambda Functions（後期自動化）**
+- **觸發方式**：CloudWatch Alarms → SNS → Lambda
+- **處理邏輯**：
+  - 高 CPU 警告時發送郵件通知
+  - DB 連線失敗時記錄詳細診斷信息
+  - 日誌異常時調用自動修復腳本
+
+---
+
+### 數據流向與工作流程
+
+#### **正常運行流程**
+```
+1. CloudWatch Agent 定期收集指標
+   ↓
+2. 指標上報到 CloudWatch Metrics
+   ↓
+3. Dashboards 實時顯示系統狀態
+   ↓
+4. 日誌寫入 CloudWatch Logs
+   ↓
+5. Metric Filters 解析日誌，生成自訂指標
+```
+
+#### **告警與診斷流程**
+```
+1. 指標超過閾值（如 CPU > 80%）
+   ↓
+2. CloudWatch Alarm 觸發
+   ↓
+3. 向 SNS 發送通知（郵件/簡訊）
+   ↓
+4. 人工登入 CloudWatch 查看日誌
+   ↓
+5. 詢問 AmazonQ 分析根本原因
+   ↓
+6. 根據建議進行手動處置或觸發 Lambda 自動修復
+```
+
+---
+
+### 與 P0-2 的關係
+
+| 項目 | P0-2（基礎架構） | P1-2（監控擴展） | 變更內容 |
+|------|----------------|----------------|--------|
+| **EC2** | ✅ 存在 | ✅ 擴展 | 新增 CloudWatch Agent |
+| **RDS** | ✅ 存在 | ✅ 監控 | 啟用慢查詢日誌（可選） |
+| **IAM 角色** | ✅ SSM 基礎 | ✅ 擴展 | 新增 CloudWatch 寫入權限 |
+| **日誌聚合** | ❌ 無 | ✅ 新增 | CloudWatch Logs |
+| **告警系統** | ❌ 無 | ✅ 新增 | CloudWatch Alarms + SNS |
+| **可視化** | ❌ 無 | ✅ 新增 | CloudWatch Dashboards |
+| **AI 分析** | ❌ 無 | ✅ 新增 | AmazonQ（可選） |
+| **自動化** | ❌ 無 | ⏳ 計畫 | Lambda（Phase 3） |
+
+---
+
+### 部署策略
+
+#### **Phase 1：基礎監控（Week 1-2）**
+```
+修改 IAM 角色 → 部署 CloudWatch Agent → 配置 Logs & Metrics → 建立 Dashboards
+```
+
+**Terraform 變更**：
+- `compute.tf`：IAM 角色新增權限
+- 新增 `monitoring.tf`：Agent 配置
+- `user_data.sh`：自動部署 Agent
+
+#### **Phase 2：日誌分析（Week 3-4）**
+```
+配置 Metric Filters → 設置告警規則 → 整合 AmazonQ
+```
+
+**Terraform 變更**：
+- `monitoring.tf`：告警和過濾器配置
+
+#### **Phase 3：自動化響應（Week 5-6）**
+```
+創建 Lambda 函數 → SNS 整合 → 自動化流程測試
+```
+
+**Terraform 變更**：
+- 新增 `automation.tf`：Lambda 和 SNS 配置
+
+---
+
+### 技術棧詳情
+
+| 元件 | 服務 | 用途 | 狀態 |
+|------|------|------|------|
+| **監控代理** | CloudWatch Agent | 指標與日誌收集 | Phase 1 |
+| **日誌存儲** | CloudWatch Logs | 中央日誌倉庫 | Phase 1 |
+| **指標聚合** | CloudWatch Metrics | 數據聚合與查詢 | Phase 1 |
+| **實時展示** | CloudWatch Dashboards | 統一可視化 | Phase 1 |
+| **告警引擎** | CloudWatch Alarms | 條件觸發 | Phase 2 |
+| **通知服務** | SNS | 郵件/簡訊通知 | Phase 2 |
+| **AI 分析** | AmazonQ | 日誌分析與診斷 | Phase 2 |
+| **自動化** | Lambda | 告警響應與修復 | Phase 3 |
+
+---
+
+### 檢核點達成策略
+
+| 檢核點 | 對應 Phase | 驗證方法 |
+|------|----------|--------|
+| **1. Agent 讀取日誌/健康狀態** | Phase 1 | CloudWatch Logs 能看到實時日誌 |
+| **2. 定位故障（500 or DB 連不上）** | Phase 2 | 人工製造故障，通過日誌查詢定位 |
+| **3. 完整示範偵測→判讀→處置** | Phase 3 | 記錄告警觸發→AmazonQ 診斷→Lambda 修復的完整流程 |
+| **4. Agent 在 AWS 上運行** | Phase 1 | Agent 部署在 EC2 上，CloudWatch 見到指標 |
+
+---
+
+### 預期成果
+
+✅ **Phase 1 完成後**：
+- CloudWatch 實時展示 WordPress + RDS 健康狀態
+- 所有日誌自動轉送到 CloudWatch Logs
+- 儀表板清晰展示系統瓶頸
+
+✅ **Phase 2 完成後**：
+- 故障自動告警（郵件/簡訊）
+- AmazonQ 快速定位問題根因
+- 建立常見故障的診斷手冊
+
+✅ **Phase 3 完成後**：
+- 高 CPU 自動降級或通知
+- DB 連線失敗自動重試
+- 完全自動化的故障響應流程
