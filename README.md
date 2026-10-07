@@ -113,11 +113,17 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 3. 完整示範一次 偵測 → 判讀 → 處置
 4. Agent 本身也跑在 AWS 上（EC2 或 Lambda），非只在本機執行
 
-## 架構說明
+## 架構設計原則
 
-基於 P0-2 的穩定基礎，P1-2 在 EC2 + RDS 上疊加**監控與自動化層**。核心是將系統觀測數據（日誌、指標）集中到 CloudWatch，並透過 AmazonQ 進行智能分析、Lambda 實現自動響應。
+基於 P0-2 的穩定基礎，P1-2 在 EC2 + RDS 上疊加**監控與自動化層**，不修改既有的網路、計算、安全組配置。
 
-### 監控基礎設定
+**核心設計**：將系統觀測數據（日誌、指標）集中到 CloudWatch，透過 AmazonQ 進行智能分析，Lambda 實現自動響應。
+
+**分階段實施**：Phase 1（基礎監控）→ Phase 2（日誌分析）→ Phase 3（自動化）
+
+---
+
+## 監控基礎設定
 
 P1-2 **不改變** P0-2 的網路、計算、安全組架構，僅在以下方向擴展：
 
@@ -135,7 +141,7 @@ P1-2 **不改變** P0-2 的網路、計算、安全組架構，僅在以下方�
 
 ---
 
-### 監控資源配置
+## 監控資源配置
 
 #### **1. CloudWatch Agent 部署與配置**
 
@@ -181,7 +187,7 @@ P1-2 **不改變** P0-2 的網路、計算、安全組架構，僅在以下方�
 
 ---
 
-### 告警與儀表板設定
+## 告警與儀表板設定
 
 #### **3. CloudWatch Alarms 配置**
 
@@ -233,7 +239,7 @@ P1-2 **不改變** P0-2 的網路、計算、安全組架構，僅在以下方�
 
 ---
 
-### 日誌與指標整合
+## 日誌與指標整合
 
 #### **5. 日誌分析工作流**
 
@@ -282,7 +288,7 @@ CloudWatch Metrics（自訂指標）
 
 ---
 
-### 自動化與凭證管理
+## 自動化與凭證管理
 
 #### **7. Lambda 自動化（Phase 3，可選）**
 
@@ -319,9 +325,33 @@ P1-2 引入的新凭證：
 
 ---
 
+## 實作改進亮點
+
+### ✨ 可觀測性（Observability）
+
+- ✅ 系統與應用日誌完全集中到 CloudWatch Logs
+- ✅ 自動解析日誌生成自訂指標（ERROR、DB 連線失敗、HTTP 500）
+- ✅ 統一儀表板展示系統全景（CPU、記憶體、磁碟、應用狀態）
+
+### ✨ 故障檢測與診斷
+
+- ✅ 多維度告警機制（系統層、應用層）
+- ✅ 日誌查詢工具快速定位故障根因
+- ✅ AmazonQ AI 輔助分析複雜故障
+
+### ✨ 自動化與智能化
+
+- ✅ 告警驅動的 Lambda 自動響應（Phase 3）
+- ✅ SNS 多渠道通知（郵件、Lambda 觸發）
+- ✅ 完整的偵測→判讀→處置工作流
+
+---
+
+## Terraform 與部署規劃
+
 ### Terraform 文件結構
 
-**現有文件**（P0-2）：
+**現有文件**（P0-2，保持不動）：
 - `network.tf` - VPC、Subnet、IGW、Route Table、Security Group
 - `compute.tf` - EC2、RDS、IAM、Key Pair
 - `variables.tf` - 變數定義
@@ -329,21 +359,80 @@ P1-2 引入的新凭證：
 - `user_data.sh` - EC2 初始化腳本
 
 **新增文件**（P1-2）：
-- `monitoring.tf` - CloudWatch Agent、Logs、Metrics、Alarms、Dashboards
-- `automation.tf`（Phase 3）- Lambda、SNS、事件規則
+
+**Phase 1 新增**：
+- `monitoring.tf`
+  - IAM 角色擴展（CloudWatchAgentServerPolicy）
+  - CloudWatch Log Groups（3 個）
+  - Metric Filters（3 個）
+
+**Phase 2 新增**（集成至 monitoring.tf）：
+- CloudWatch Alarms（5-8 個）
+- SNS Topic 與訂閱
+- CloudWatch Dashboard
+
+**Phase 3 新增**：
+- `automation.tf`
+  - Lambda IAM 角色與權限
+  - Lambda 函數定義
+  - SNS → Lambda 訂閱規則
 
 **修改文件**：
-- `compute.tf` - IAM 角色新增 CloudWatchAgentServerPolicy
-- `user_data.sh` - 新增 Agent 安裝和配置邏輯
-- `terraform.tfvars` - 新增告警郵箱、閾值等參數
+- `compute.tf` 
+  - 第 92-95 行：IAM 角色新增 CloudWatchAgentServerPolicy
+- `user_data.sh`
+  - 新增 Agent 下載、安裝、配置段落
+  - 新增配置文件模板（JSON）
+- `terraform.tfvars`
+  - 新增：`alert_email`（告警郵箱）
+  - 新增：`alarm_thresholds`（告警閾值）
+- `variables.tf`
+  - 新增上述變數定義
 
 ---
 
-### 檢核點驗證方法
+## 檢核點驗證規劃
 
-| 檢核點 | 驗證步驟 | 預期結果 |
-|------|--------|--------|
-| **1. Agent 讀取日誌/健康狀態** | 登入 CloudWatch → Logs → 查看 Log Stream | 能看到實時的應用和系統日誌 |
-| **2. 定位故障（500 or DB 連不上）** | 故意停止 RDS / 製造 WordPress 錯誤，在 Logs 中查詢 | 能在日誌中找到明確的錯誤信息和堆棧 |
-| **3. 完整示範偵測→判讀→處置** | 記錄告警觸發 → AmazonQ 分析 → 執行修復 的完整過程 | 整個流程的截圖和日誌紀錄 |
-| **4. Agent 在 AWS 上運行** | 登入 CloudWatch → Metrics → Browse metrics → 選擇 CWAgent namespace | 能看到 cpu、mem、disk 等指標 |
+### 逐點驗證方法
+
+| # | 檢核點 | Phase | 驗證步驟 | 預期結果 | 驗證證據 |
+|---|------|-------|--------|--------|--------|
+| **1** | Agent 讀取日誌/健康狀態 | Phase 1 | 登入 CloudWatch → Logs → 查看 Log Stream | 能看到實時的應用和系統日誌 | Log Stream 截圖 |
+| **2** | 定位故障（500 or DB 連不上） | Phase 2 | 故意停止 RDS / 製造 WordPress 錯誤，用 Insights 查詢 | 能在日誌中找到明確的錯誤信息和堆棧 | 查詢結果截圖 + 分析報告 |
+| **3** | 完整示範偵測→判讀→處置 | Phase 3 | 記錄完整流程：告警觸發 → AmazonQ 診斷 → Lambda 修復 | 流程完整且有效 | 流程記錄 + 截圖組合 |
+| **4** | Agent 在 AWS 上運行 | Phase 1 | 登入 CloudWatch → Metrics → Browse → CWAgent namespace | 能看到 cpu、mem、disk 等指標 | Metrics 截圖 |
+
+### 製造故障場景清單
+
+| 故障類型 | 製造方式 | 預期症狀 | 驗證指標 |
+|---------|--------|--------|--------|
+| **高 CPU** | 執行 `stress-ng` 或密集計算 | CPU > 80% | CloudWatch CPUUtilization |
+| **高記憶體** | 執行記憶體洩漏腳本 | Memory > 90% | CloudWatch MemoryUtilization |
+| **滿磁碟** | 寫入大文件至磁碟 | DiskUsed > 90% | CloudWatch DiskUsed |
+| **DB 連線失敗** | 修改 RDS Security Group / 停止 RDS | DB 連線失敗日誌 | ERROR 日誌計數 > 5 |
+| **WordPress 500 錯誤** | 修改 wp-config.php / 禁用關鍵插件 | HTTP 500 日誌 | HTTP500Count > 3 |
+
+---
+
+## 部署資源
+
+本階段需要參考的文檔：
+
+| 文件 | 用途 | 狀態 |
+|------|------|------|
+| 📖 `LEARNING_ROADMAP.md` | 3 階段學習計畫與時間估算 | ✅ 已編寫 |
+| 📝 `infra/monitoring.tf`（待建） | CloudWatch 基礎設施代碼 | 📋 計畫中 |
+| 📝 `infra/automation.tf`（待建） | Lambda 與 SNS 代碼 | 📋 計畫中 |
+| 📖 `practice/cloudwatch-agent/`（待建） | CloudWatch Agent 學習練習 | 📋 計畫中 |
+
+---
+
+## 下一步行動
+
+**推薦步驟順序**：
+
+1. **Day 1-2**：新增 `monitoring.tf`（Phase 1）+ 修改 `compute.tf`、`user_data.sh`、`variables.tf`
+2. **Day 3-4**：部署至測試環境，驗證 Agent 正常運作 ✅ 檢核點 1 & 4
+3. **Day 5-7**：新增 Alarms + Dashboard（Phase 2），製造故障場景測試 ✅ 檢核點 2
+4. **Week 2**：`automation.tf`（Phase 3），完整端到端測試 ✅ 檢核點 3
+5. **Week 3**：文檔整理與最佳實踐沉澱
