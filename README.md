@@ -16,13 +16,13 @@
 
 ## 架構說明
 
-### 網路設定:
+### 網路設定
 
 1. 建立一個 VPC (vpc-yiweee)，CIDR 設定為 `10.0.0.0/16`。
 2. VPC 下切出 public 一個、private 兩個共計三個網段，名稱分別為 subnet-yiweee-public-1a(`10.0.1.0/24`)、subnet-yiweee-private-1a(`10.0.2.0/24`)、subnet-yiweee-private-1c(`10.0.3.0/24`)。
 3. public 網段的 `0.0.0.0/0` 指向 IGW，並啟動內部機器自動配發對外 IP；private 網段只有 VPC 內的 local 路由，不對外。
 
-### 運算資源:
+### 運算資源
 
 1. 在 public 網段下，放一台 EC2 作為 Web server(機器名 ec2-yiweee，部署 WordPress)。
 2. 在 private 網段下，放一台 RDS 作為 DB server(機器名 rds-yiweee，選擇 MySQL)，採用 RDS 簡化 MySQL 部署設定等繁瑣步驟。
@@ -37,7 +37,7 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 5. RDS 採 single-AZ，且僅放於 subnet-yiweee-private-1a 中，subnet-yiweee-private-1c 網段只是為了滿足 DB subnet group 的要求。
 
-### Security group 設定:
+### Security group 設定
 
 1. DB server 的 inbound 只放行 3306，來源限制為 Web server 的 SG。
 2. Web server 的 inbound 放行 80，來源 `0.0.0.0/0`；22，來源 `[維護人員的 IP]`。
@@ -103,7 +103,7 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 ## 目標
 
-- 目的：實現 cloudwatch + amazonQ 完成上述檢核點項目。
+- 實現 cloudwatch + amazonQ 資源監控流程，並完成上述檢核點項目。
 
 ## 核心檢核點
 
@@ -114,29 +114,37 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 ## 架構說明
 
-P1-2 疊加在 P0-2 之上，不動既有的網路、SG、RDS，只新增一條「觀測 → 偵測 → 判讀 → 處置」的線。檢核點中的 Agent 指的是「會判讀的維運 Agent」，不是 CloudWatch Agent（後者只是把日誌搬上雲的工具）。
+### 流程概念
 
+1. 資源監控流程：P1-2 沿用 P0-2 的網路、SG、RDS 設計，並在建置時納入「觀測 → 偵測 → 判讀 → 處置」的線。檢核點中的 Agent 指的是「會判讀的維運 Agent」，不是 CloudWatch Agent（後者只是把日誌搬上雲的工具）。
+
+```mermaid
+flowchart LR
+    A["Web 日誌 / RDS 指標"] --> B[CloudWatch]
+    B --> C{{Alarm}}
+    C --> D["Amazon Q 調查<br/>（判讀）"]
+    C --> E[SNS]
+    E --> F["Lambda<br/>（蒐證）"]
+    D --> G[通知維護人員]
+    F --> G
+    G --> H[人工處置]
 ```
-Web 日誌 / RDS 指標 → CloudWatch → Alarm ─┬→ Amazon Q 調查（判讀）──┬→ 通知維護人員 → 人工處置
-                                         └→ SNS → Lambda（蒐證）─┘
-```
 
-CloudWatch 與 Amazon Q 是本階段的必要組件：CloudWatch 負責觀測與偵測，Amazon Q 負責判讀。其餘組件（SNS、Lambda）只是把兩者串起來。
+- 2. CloudWatch 與 Amazon Q 是本階段的必要組件：CloudWatch 負責觀測與偵測，Amazon Q 負責判讀。其餘組件（SNS、Lambda）只是把兩者串起來。
 
-### 觀測資料（Agent 讀什麼）:
+### 觀測資料（Agent 讀什麼）
 
-1. Web：在 ec2-yiweee 上安裝 CloudWatch Agent，把 Apache 的 access log 與 error log 送進 CloudWatch Logs。
-2. DB：直接使用 RDS 內建指標（連線數、CPU 等）與 instance 狀態，不開啟 RDS 的 log 匯出，維持「不改 P0-2 資源」的原則。
-3. P0-2 唯一需要調整的地方是 Web server：IAM role 多一個寫入 CloudWatch 的權限、user_data 多一段安裝 CloudWatch Agent。
-4. user_data 只在首次開機執行，因此 Web server 需要重建才會生效；文章資料在 RDS 不受影響，此為已知取捨。
+1. Web：在 ec2-yiweee 上安裝 CloudWatch Agent，並透過 cloudWatch Agent 將 Apache 的 access log 與 error log 送進 CloudWatch Logs。
+2. DB：直接使用 RDS 內建指標（連線數、CPU 等）與 instance 狀態，不開啟 RDS 的 log 匯出。本階段的故障情境是在 SG 層擋掉連線，請求到不了 MySQL，RDS log 不會有紀錄，因此不需為此更動 RDS。
+3. Web server 的建置內容新增兩項：IAM role 的 CloudWatch 寫入權限、user_data 安裝 CloudWatch Agent。
 
-### 偵測（何時叫醒 Agent）:
+### 偵測（何時叫醒 Agent）
 
 1. 用 metric filter 把 access log 中的 HTTP 5xx 轉成指標，超過門檻即觸發 Alarm。
 2. Alarm 觸發時同時做兩件事：啟動 Amazon Q 調查、發到 SNS（寄信給維護人員並叫醒 Lambda）。
 3. 只做 HTTP 5xx 這一條告警。CPU／記憶體／磁碟告警與 Dashboard 不在檢核點範圍內，先不做。
 
-### 判讀（Agent 本體）:
+### 判讀（Agent 本體）
 
 1. 維運 Agent 由兩個部分組成：Amazon Q 負責判讀（大腦），Lambda 負責蒐證與通知（手腳）。
 2. Amazon Q 的落地形式是 CloudWatch investigations（原名 Amazon Q Developer operational investigations）。在帳號內建立一個 investigation group，並把它設為 Alarm 的 action，Alarm 一響就自動開始調查。
@@ -145,7 +153,7 @@ CloudWatch 與 Amazon Q 是本階段的必要組件：CloudWatch 負責觀測與
 5. Lambda 只透過 AWS API 讀資料，不直連 Web 或 DB，因此不需要放進 VPC，也不需要動任何 SG。
 6. Amazon Q 無法由 Lambda 以 IAM role 直接呼叫（CLI 版本只接受 Builder ID／Identity Center 登入），所以判讀交給 Alarm 直接觸發，Lambda 不經手，此為已知取捨。
 
-### 處置:
+### 處置
 
 1. Agent 只讀不改：維護人員收到通知後，到 CloudWatch 查看 Amazon Q 的調查結果，由人依建議執行處置。
 2. 不做自動修復：自動改 SG 或重啟服務需要寫入權限，誤判的代價高，而檢核點 3 只要求完整示範一次流程，此為已知取捨。
