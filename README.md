@@ -116,46 +116,46 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 ### 流程概念
 
-1. 資源監控流程：P1-2 沿用 P0-2 的網路、SG、RDS 設計，並在建置時納入「觀測 → 偵測 → 判讀 → 處置」的線。檢核點中的 Agent 指的是「會判讀的維運 Agent」，不是 CloudWatch Agent（後者只是把日誌搬上雲的工具）。
+1. 資源監控流程：P1-2 沿用 P0-2 的網路、SG、RDS 設計，並在建置時納入「觀測 → 偵測 → 判讀 → 處置」的線，以下各節依這四個階段說明。檢核點中的 Agent 指的是負責判讀的維運 Agent，本階段由 Amazon Q 擔任；它不是 CloudWatch Agent（後者只是把日誌搬上雲的工具）。
 
 ```mermaid
 flowchart LR
-    A["Web 日誌 / RDS 指標"] --> B[CloudWatch]
-    B --> C{{Alarm}}
+    A["Web 日誌 / RDS 指標"] --> B["CloudWatch<br/>（觀測）"]
+    B --> C{{"Alarm<br/>（偵測）"}}
     C --> D["Amazon Q 調查<br/>（判讀）"]
     C --> E[SNS]
-    E --> F["Lambda<br/>（蒐證）"]
-    D --> G[通知維護人員]
-    F --> G
+    E --> F[告警信通知維護人員]
+    F --> G[查看調查結果]
+    D --> G
     G --> H[人工處置]
 ```
 
-2. CloudWatch 與 Amazon Q 是本階段的必要組件：CloudWatch 負責觀測與偵測，Amazon Q 負責判讀。其餘組件（SNS、Lambda）只是把兩者串起來。
+2. 各組件的分工：CloudWatch 負責觀測與偵測，Amazon Q 負責判讀，SNS 只負責在告警當下寄信通知維護人員，處置由人執行。
 
 ### 觀測資料（Agent 讀什麼）
 
-1. Web：在 ec2-yiweee 上安裝 CloudWatch Agent，並透過 cloudWatch Agent 將 Apache 的 access log 與 error log 送進 CloudWatch Logs。
-2. DB：直接使用 RDS 內建指標（連線數、CPU 等）與 instance 狀態，不開啟 RDS 的 log 匯出。本階段的故障情境是在 SG 層擋掉連線，請求到不了 MySQL，RDS log 不會有紀錄，因此不需為此更動 RDS。
-3. Web server 的建置內容新增兩項：IAM role 的 CloudWatch 寫入權限、user_data 安裝 CloudWatch Agent。
+1. Web：在 ec2-yiweee 上安裝 CloudWatch Agent，將 Apache 的 access log 與 error log 送進 CloudWatch Logs。
+2. DB：直接使用 RDS 內建指標（連線數、CPU 等）與 instance 狀態，不開啟 RDS 的 log 匯出。本階段的故障情境（見「故障情境設計」）是在 SG 層擋掉連線，請求到不了 MySQL，RDS log 不會有紀錄，因此不需為此更動 RDS。
+3. 因此建置上只有 Web server 需要更動，新增兩項：IAM role 的 CloudWatch 寫入權限、user_data 安裝 CloudWatch Agent。
 
 ### 偵測（何時叫醒 Agent）
 
-1. 用 metric filter 把 access log 中的 HTTP 5xx 轉成指標，超過門檻即觸發 Alarm。
-2. Alarm 觸發時同時做兩件事：啟動 Amazon Q 調查、發到 SNS（寄信給維護人員並叫醒 Lambda）。
-3. 只做 HTTP 5xx 這一條告警。CPU／記憶體／磁碟告警與 Dashboard 不在檢核點範圍內，先不做。
+1. 設定 metric filter 將 Apache 的 access log 中的 HTTP 5xx 轉成指標，超過門檻即觸發 Alarm。
+2. 網站沒有請求時不會產生日誌，指標也就沒有資料。Alarm 預設會把這種情況標成 INSUFFICIENT_DATA 而不是 OK，因此設定為「缺資料視為正常」，讓 Alarm 在平時與故障排除後都顯示 OK。同理，驗證時需要自行發出請求來產生 5xx，否則不會觸發 Alarm。
+3. Alarm 觸發時同時做兩件事：啟動 Amazon Q 調查、發到 SNS 寄信給維護人員。兩者平行進行，告警信會比調查結果先到。
+4. 告警信只有告警本身的資訊（名稱、狀態變化、門檻），沒有日誌內容與分析。因此在告警描述中寫明「Amazon Q 已自動開始調查」與調查頁面的位置，讓維護人員知道下一步去哪裡看。
+5. 只做 HTTP 5xx 這一條告警。CPU／記憶體／磁碟告警與 Dashboard 不在檢核點範圍內，先不做。
 
 ### 判讀（Agent 本體）
 
-1. 維運 Agent 由兩個部分組成：Amazon Q 負責判讀（大腦），Lambda 負責蒐證與通知（手腳）。
-2. Amazon Q 的落地形式是 CloudWatch investigations（原名 Amazon Q Developer operational investigations）。在帳號內建立一個 investigation group，並把它設為 Alarm 的 action，Alarm 一響就自動開始調查。
-3. Amazon Q 會自行掃描相關的日誌、指標與變更紀錄，產出「根因假設 + 建議處置」。
-4. Lambda（機器名 lambda-yiweee-agent）對應檢核點 4：被 SNS 叫醒後，蒐集最近幾分鐘的 Web 日誌、RDS 狀態、DB SG 現況，整理成摘要寄給維護人員。
-5. Lambda 只透過 AWS API 讀資料，不直連 Web 或 DB，因此不需要放進 VPC，也不需要動任何 SG。
-6. Amazon Q 無法由 Lambda 以 IAM role 直接呼叫（CLI 版本只接受 Builder ID／Identity Center 登入），所以判讀交給 Alarm 直接觸發，Lambda 不經手，此為已知取捨。
+1. 維運 Agent 即 Amazon Q，落地形式是 CloudWatch investigations（原名 Amazon Q Developer operational investigations）。在帳號內建立一個 investigation group，並把它設為 Alarm 的 action，Alarm 一響就自動開始調查。
+2. Amazon Q 會自行掃描相關的日誌、指標與變更紀錄，產出「根因假設 + 建議處置」。
+3. 調查結果在 CloudWatch 的 investigations 頁面查看，不會主動寄給維護人員。
+4. 檢核點 4 原本是以「自建 Agent（LangChain／Bedrock）跑在 Lambda 上」為前提所寫。本階段改用 Amazon Q，Agent 本體就是 AWS 上的受管服務，已符合「非只在本機執行」的要求，因此不另外建 Lambda。
 
 ### 處置
 
-1. Agent 只讀不改：維護人員收到通知後，到 CloudWatch 查看 Amazon Q 的調查結果，由人依建議執行處置。
+1. Agent 只讀不改：維護人員收到告警信後，到 CloudWatch 查看 Amazon Q 的調查結果，由人依建議執行處置。
 2. 不做自動修復：自動改 SG 或重啟服務需要寫入權限，誤判的代價高，而檢核點 3 只要求完整示範一次流程，此為已知取捨。
 
 ## 故障情境設計
@@ -169,23 +169,22 @@ flowchart LR
 
 1. 全部透過 IAM role 授權，P1-2 不新增任何長期金鑰或密碼。
 2. Web server 的 role 新增 `CloudWatchAgentServerPolicy`，只為了寫入日誌。
-3. Lambda 的 role 採最小權限：讀 CloudWatch Logs／指標、查 RDS 與 SG 狀態、發 SNS，沒有任何修改資源的權限。
-4. Amazon Q 調查使用獨立的 role（由 `aiops.amazonaws.com` 擔任），同樣只有唯讀權限。
-5. 告警收件信箱寫在 `*.tfvars`，沿用 P0-2 的 `.gitignore`。
-6. Log group 設定保留天數，避免日誌（含訪客 IP）無限累積。
+3. Amazon Q 調查使用獨立的 role（由 `aiops.amazonaws.com` 擔任），只有唯讀權限，沒有任何修改資源的權限。
+4. 告警收件信箱寫在 `*.tfvars`，沿用 P0-2 的 `.gitignore`。
+5. Log group 設定保留天數，避免日誌（含訪客 IP）無限累積。
 
 ## 檢核點驗證規劃
 
-- **檢核點 1**：Lambda 寄出的摘要信中有它讀回的 Web 日誌片段與 RDS 狀態；Amazon Q 調查頁面列出它引用的日誌與指標。
-- **檢核點 2**：移除 3306 規則後，Amazon Q 調查頁面的根因假設指向 DB 連線失敗與 DB SG，並附上建議處置（截圖）。
-- **檢核點 3**：整理一次完整時間軸：Alarm 觸發 → Amazon Q 調查完成 → 依建議 `terraform apply` 還原 → `curl` 回 200 且 Alarm 回到 OK。
-- **檢核點 4**：AWS web console 上的 Lambda 函式截圖，以及它被 SNS 觸發的執行紀錄，證明不是在本機執行；Amazon Q 調查本身也是 AWS 上的受管服務。
+- **檢核點 1**：Amazon Q 調查頁面列出它引用的 Web 日誌與 RDS 指標（截圖）。此項取決於 Amazon Q 能否從告警指標連回 Web 的 log group，建置後優先驗證。
+- **檢核點 2**：移除 3306 規則並以 `curl` 發出請求觸發 Alarm 後，Amazon Q 調查頁面的根因假設指向 DB 連線失敗與 DB SG，並附上建議處置（截圖）。
+- **檢核點 3**：整理一次完整時間軸：移除 3306 規則 → `curl` 回 500、Alarm 觸發並寄出告警信 → Amazon Q 調查完成 → 依建議 `terraform apply` 還原 → `curl` 回 200 且 Alarm 回到 OK。
+- **檢核點 4**：AWS web console 上的 investigation group，以及由 Alarm 自動觸發的調查紀錄（截圖），證明 Agent 是 AWS 上的受管服務，不是在本機執行。
 
 ## 部署資源
 
 | 文件                                                             | 說明                                                               |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------ |
 | 📝 `infra/monitoring.tf`（待建）                                 | 觀測與偵測：Log group、metric filter、Alarm、SNS                   |
-| 📝 `infra/agent.tf`（待建）                                      | 維運 Agent：Amazon Q investigation group、Lambda 與各自的 IAM role |
+| 📝 `infra/agent.tf`（待建）                                      | 維運 Agent：Amazon Q investigation group 與其 IAM role             |
 | 🔧 `infra/compute.tf`、`infra/user_data.sh`（待修改）            | Web server 的 IAM 權限與 CloudWatch Agent 安裝                     |
 | 📖 [CloudWatch 練習](practice/cloudwatch/CLOUDWATCH_PRACTICE.md) | CloudWatch 操作練習紀錄                                            |
