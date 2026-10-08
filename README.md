@@ -130,7 +130,7 @@ flowchart LR
     G --> H[人工處置]
 ```
 
-- 2. CloudWatch 與 Amazon Q 是本階段的必要組件：CloudWatch 負責觀測與偵測，Amazon Q 負責判讀。其餘組件（SNS、Lambda）只是把兩者串起來。
+2. CloudWatch 與 Amazon Q 是本階段的必要組件：CloudWatch 負責觀測與偵測，Amazon Q 負責判讀。其餘組件（SNS、Lambda）只是把兩者串起來。
 
 ### 觀測資料（Agent 讀什麼）
 
