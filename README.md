@@ -103,7 +103,7 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 ## 目標
 
-- 實現 cloudwatch + amazonQ 資源監控流程，並完成上述檢核點項目。
+- 實現 CloudWatch + CloudWatch investigations 資源監控流程，並完成下方檢核點項目。
 
 ## 核心檢核點
 
@@ -116,21 +116,29 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 ### 流程概念
 
-1. 資源監控流程：P1-2 沿用 P0-2 的網路、SG、RDS 設計，並在建置時納入「觀測 → 偵測 → 判讀 → 處置」的線，以下各節依這四個階段說明。檢核點中的 Agent 指的是負責判讀的維運 Agent，本階段由 Amazon Q 擔任；它不是 CloudWatch Agent（後者只是把日誌搬上雲的工具）。
+1. 資源監控流程：P1-2 沿用 P0-2 的網路、SG、RDS 設計，並在建置時納入「觀測 → 偵測 → 判讀 → 處置」的線，以下各節依這四個階段說明。檢核點中的 Agent 指的是負責判讀的維運 Agent，本階段由 CloudWatch investigations 擔任；它不是 CloudWatch Agent（後者只是把日誌搬上雲的工具）。
 
 ```mermaid
 flowchart LR
-    A["Web 日誌 / RDS 指標"] --> B["CloudWatch<br/>（觀測）"]
-    B --> C{{"Alarm<br/>（偵測）"}}
-    C --> D["Amazon Q 調查<br/>（判讀）"]
+    W["Web server<br/>Apache access / error log"] -- "CloudWatch Agent" --> L
+    R["RDS"] --> M
+    subgraph CW["CloudWatch（觀測）"]
+        L["Web 日誌"]
+        M["RDS 內建指標"]
+    end
+    L -- "metric filter<br/>HTTP 5xx" --> C{{"Alarm<br/>（偵測）"}}
+    C --> D["CloudWatch investigations 調查<br/>（判讀）"]
     C --> E[SNS]
+    L -. "讀取" .-> D
+    M -. "讀取" .-> D
+    T["CloudTrail 變更紀錄"] -. "讀取" .-> D
     E --> F[告警信通知維護人員]
     F --> G[查看調查結果]
     D --> G
     G --> H[人工處置]
 ```
 
-2. 各組件的分工：CloudWatch 負責觀測與偵測，Amazon Q 負責判讀，SNS 只負責在告警當下寄信通知維護人員，處置由人執行。
+2. 各組件的分工：CloudWatch 負責觀測與偵測，CloudWatch investigations 負責判讀，SNS 只負責在告警當下寄信通知維護人員，處置由人執行。
 
 ### 觀測資料（Agent 讀什麼）
 
@@ -140,51 +148,53 @@ flowchart LR
 
 ### 偵測（何時叫醒 Agent）
 
-1. 設定 metric filter 將 Apache 的 access log 中的 HTTP 5xx 轉成指標，超過門檻即觸發 Alarm。
-2. 網站沒有請求時不會產生日誌，指標也就沒有資料。Alarm 預設會把這種情況標成 INSUFFICIENT_DATA 而不是 OK，因此設定為「缺資料視為正常」，讓 Alarm 在平時與故障排除後都顯示 OK。同理，驗證時需要自行發出請求來產生 5xx，否則不會觸發 Alarm。
-3. Alarm 觸發時同時做兩件事：啟動 Amazon Q 調查、發到 SNS 寄信給維護人員。兩者平行進行，告警信會比調查結果先到。
-4. 告警信只有告警本身的資訊（名稱、狀態變化、門檻），沒有日誌內容與分析。因此在告警描述中寫明「Amazon Q 已自動開始調查」與調查頁面的位置，讓維護人員知道下一步去哪裡看。
+1. 設定 metric filter 將 Apache 的 access log 中的 HTTP 5xx 轉成指標，超過門檻即觸發 Alarm。在本階段的故障情境下（見「故障情境設計」），每個請求都須等到逾時才產生一筆 500，所以門檻要低到零星幾筆就觸發。
+2. 網站沒有請求時不會產生日誌，指標也就沒有資料，Alarm 預設會把這種情況標成 INSUFFICIENT_DATA 而不是 OK，這是預期狀態，不是錯誤。也因為沒有請求就沒資料，驗證時需要自行發出請求來產生 5xx，否則不會觸發 Alarm。
+3. Alarm 觸發時同時做兩件事：啟動 CloudWatch investigations 調查、發到 SNS 寄信給維護人員。兩者平行進行，告警信寄送時調查通常尚未完成。
+4. 告警信只有告警本身的資訊（名稱、狀態變化、門檻），沒有日誌內容與分析。因此在告警描述中寫明「CloudWatch investigations 已自動開始調查」與調查頁面的位置，讓維護人員知道下一步去哪裡看。
 5. 只做 HTTP 5xx 這一條告警。CPU／記憶體／磁碟告警與 Dashboard 不在檢核點範圍內，先不做。
 
 ### 判讀（Agent 本體）
 
-1. 維運 Agent 即 Amazon Q，落地形式是 CloudWatch investigations（原名 Amazon Q Developer operational investigations）。在帳號內建立一個 investigation group，並把它設為 Alarm 的 action，Alarm 一響就自動開始調查。
-2. Amazon Q 會自行掃描相關的日誌、指標與變更紀錄，產出「根因假設 + 建議處置」。
+1. 維運 Agent 本體是 CloudWatch investigations（原為 Amazon Q Developer Operational Investigations）。在帳號內建立一個 investigation group，並把它設為 Alarm 的 action，Alarm 一響就自動開始調查。
+2. CloudWatch investigations 會自行掃描相關的日誌、指標與 CloudTrail 的變更紀錄，產出「根因假設 + 建議處置」。
 3. 調查結果在 CloudWatch 的 investigations 頁面查看，不會主動寄給維護人員。
-4. 檢核點 4 原本是以「自建 Agent（LangChain／Bedrock）跑在 Lambda 上」為前提所寫。本階段改用 Amazon Q，Agent 本體就是 AWS 上的受管服務，已符合「非只在本機執行」的要求，因此不另外建 Lambda。
+4. 本階段為了更加活用既有的 AWS 服務，採用 CloudWatch investigations，Agent 本體就是 AWS 上的受管服務，已符合「非只在本機執行」的要求，因此不另外採 Bedrock/LangChain + Lambda 自建 Agent。
 
 ### 處置
 
-1. Agent 只讀不改：維護人員收到告警信後，到 CloudWatch 查看 Amazon Q 的調查結果，由人依建議執行處置。
+1. Agent 只讀不改：維護人員收到告警信後，到 CloudWatch 查看 investigations 的調查結果，由人依建議執行處置。
 2. 不做自動修復：自動改 SG 或重啟服務需要寫入權限，誤判的代價高，而檢核點 3 只要求完整示範一次流程，此為已知取捨。
 
 ## 故障情境設計
 
 1. 主情境選「DB 連不上」：手動移除 DB SG 的 3306 inbound 規則。
 2. WordPress 連不上 DB 時會回 HTTP 500，因此一個情境同時涵蓋「網站 500」與「DB 連不上」兩種症狀。
-3. 選這個做法的理由：立即生效、不需停 RDS（停止與啟動各要數分鐘）、用 `terraform apply` 即可還原。
-4. 預期的判讀路徑：Web 日誌出現大量 500 → RDS 本身狀態正常 → 問題在兩者之間 → DB SG 少了 3306 規則。
+3. 選這個做法的理由：不需停 RDS（停止與啟動各要數分鐘）、用 `terraform apply` 即可還原。
+4. 移除 SG 規則後封包會被丟棄但不會拒絕連線，WordPress 會卡到連線逾時後才回 500，實際等待時間待建置後測試。
+5. 預期的判讀路徑：Web 日誌出現 500 → RDS 本身狀態正常 → CloudTrail 的變更紀錄顯示 DB SG 剛被移除 3306 規則。
 
 ## 權限與 Credential 管理
 
 1. 全部透過 IAM role 授權，P1-2 不新增任何長期金鑰或密碼。
 2. Web server 的 role 新增 `CloudWatchAgentServerPolicy`，只為了寫入日誌。
-3. Amazon Q 調查使用獨立的 role（由 `aiops.amazonaws.com` 擔任），只有唯讀權限，沒有任何修改資源的權限。
-4. 告警收件信箱寫在 `*.tfvars`，沿用 P0-2 的 `.gitignore`。
-5. Log group 設定保留天數，避免日誌（含訪客 IP）無限累積。
+3. CloudWatch investigations 調查使用獨立的 role（由 `aiops.amazonaws.com` 擔任），只有唯讀權限，沒有任何修改資源的權限。
+4. investigation group 要允許 Alarm 建立調查。
+5. SNS 告警信箱訂閱需要人工點確認信，且告警信箱應寫在 `*.tfvars`，沿用 P0-2 的 `.gitignore`。
+6. Log group 設定保留天數，避免日誌（含訪客 IP）無限累積。
 
 ## 檢核點驗證規劃
 
-- **檢核點 1**：Amazon Q 調查頁面列出它引用的 Web 日誌與 RDS 指標（截圖）。此項取決於 Amazon Q 能否從告警指標連回 Web 的 log group，建置後優先驗證。
-- **檢核點 2**：移除 3306 規則並以 `curl` 發出請求觸發 Alarm 後，Amazon Q 調查頁面的根因假設指向 DB 連線失敗與 DB SG，並附上建議處置（截圖）。
-- **檢核點 3**：整理一次完整時間軸：移除 3306 規則 → `curl` 回 500、Alarm 觸發並寄出告警信 → Amazon Q 調查完成 → 依建議 `terraform apply` 還原 → `curl` 回 200 且 Alarm 回到 OK。
+- **檢核點 1**：CloudWatch investigations 調查頁面列出它引用的 Web 日誌與 RDS 指標（截圖）。此項取決於調查能否從告警指標關聯到 Web 日誌與 RDS 指標，建置後優先驗證；若未自動引用，改在調查中手動加入 log group 與 RDS 指標。
+- **檢核點 2**：移除 3306 規則並以 `curl` 發出請求觸發 Alarm 後，CloudWatch investigations 調查頁面的根因假設指向 DB 連線失敗與 DB SG，並附上建議處置（截圖）。此處的 `curl` 逾時要設得比 WordPress 等待時間還長，否則 `curl` 會先放棄，拿不到 500。
+- **檢核點 3**：整理一次完整時間軸：移除 3306 規則 → `curl` 回 500、Alarm 觸發並寄出告警信 → CloudWatch investigations 調查完成 → 依建議 `terraform apply` 還原 → `curl` 回 200。`curl` 設定同「檢核點 2」。
 - **檢核點 4**：AWS web console 上的 investigation group，以及由 Alarm 自動觸發的調查紀錄（截圖），證明 Agent 是 AWS 上的受管服務，不是在本機執行。
 
 ## 部署資源
 
-| 文件                                                             | 說明                                                               |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------ |
-| 📝 `infra/monitoring.tf`（待建）                                 | 觀測與偵測：Log group、metric filter、Alarm、SNS                   |
-| 📝 `infra/agent.tf`（待建）                                      | 維運 Agent：Amazon Q investigation group 與其 IAM role             |
-| 🔧 `infra/compute.tf`、`infra/user_data.sh`（待修改）            | Web server 的 IAM 權限與 CloudWatch Agent 安裝                     |
-| 📖 [CloudWatch 練習](practice/cloudwatch/CLOUDWATCH_PRACTICE.md) | CloudWatch 操作練習紀錄                                            |
+| 文件                                                             | 說明                                                                       |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 📝 `infra/monitoring.tf`（待建）                                 | 觀測與偵測：Log group、metric filter、Alarm、SNS                           |
+| 📝 `infra/agent.tf`（待建）                                      | 維運 Agent：CloudWatch investigations 的 investigation group 與其 IAM role |
+| 🔧 `infra/compute.tf`、`infra/user_data.sh`（待修改）            | Web server 的 IAM 權限與 CloudWatch Agent 安裝                             |
+| 📖 [CloudWatch 練習](practice/cloudwatch/CLOUDWATCH_PRACTICE.md) | CloudWatch 操作練習紀錄                                                    |
