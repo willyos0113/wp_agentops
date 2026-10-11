@@ -45,7 +45,7 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 ## RDS(MySQL) 與 WordPress 串接設定
 
-1. 在 MySQL 中建立限定來源的帳號（例如 `'wp'@'10.0.1.%'`），並只授權 WordPress 用的資料庫。從 Web server 用 master 帳號連進去創建 `wp` 帳號。
+1. 在 MySQL 中建立限定來源的帳號（`'wp'@'10.0.%'`，只接受 VPC 網段內的來源），並只授權 WordPress 用的資料庫。從 Web server 用 master 帳號連進去創建 `wp` 帳號。
 2. 並把 WordPress 的 `wp-config.php` 中的 `DB_HOST` 指向 RDS 的 DNS 名稱(endpoint)。
 3. 1 與 2 的操作放入 Web server 的 user_data 一併處理。
 
@@ -77,15 +77,42 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 - ✅ 跨 AZ 子網配置（為未來 Multi-AZ 準備）
 - ✅ 自動化密碼和用戶管理（master / wp 帳號分離）
 - ✅ 自動等待 RDS 就緒再配置（確保部署穩定）
-- ✅ WordPress Salt Key 隨機生成（安全最佳實踐）
+- ✅ WordPress Salt Key 已設定（固定值寫在 `user_data.sh`，每次部署相同，此為已知取捨）
 
-## 檢核點驗證規劃
+## 檢核點驗證步驟
 
-- **檢核點 1**：AWS web console 上顯示一個 VPC、三個網段截圖；兩張 route table 的截圖，證明指向方向正確。
-- **檢核點 2**：從外部 `curl -I http://<web server 的對外 IP>` 回 302 導向安裝頁。完成安裝後再連線一次，回 200 成功。
-- **檢核點 3**：從本機連 RDS endpoint 的 3306 逾時（驗證隔離）。
-- **檢核點 4**：從 Web server 執行 `nc -zv <endpoint> 3306`，預期會成功；在 VPC 內部臨時起一台 EC2 且掛不同 SG，發起連線預期會失敗。臨時 EC2 測試完後刪除。
-- **檢核點 5**：發文後在 Web server 用 mysql 查 `SELECT post_title FROM wp_posts` 看得到。
+以下指令都在 `infra/` 目錄下執行。
+
+### 部署
+
+1. 確認 `terraform.tfvars` 的 `admin_cidr` 是目前的對外 IP（`curl -s https://checkip.amazonaws.com`），`alarm_email` 是收得到信的信箱。
+2. 執行 `terraform apply`，RDS 建立約需 5 到 10 分鐘。
+3. 到信箱點擊 AWS Notifications 的確認連結，否則 P1-2 驗證時收不到告警信。
+4. 等待 user_data 執行完成。可登入 Web server 執行 `sudo tail /var/log/cloud-init-output.log`，最後一行出現 `CloudWatch Agent setup complete!` 才算完成。
+
+### 驗證
+
+1. **檢核點 1**：在 AWS web console 的 VPC 頁面截圖 `vpc-yiweee`、三個 subnet、兩張 route table。`rt-yiweee-public` 要有 `0.0.0.0/0` 指向 IGW，`rt-yiweee-private` 只有 `local`。
+2. **檢核點 2**：執行下列指令，第一次預期回 302 導向安裝頁。用瀏覽器完成 WordPress 安裝後再執行一次，預期回 200。
+
+```
+curl -I $(terraform output -raw wordpress_url)
+```
+
+3. **檢核點 3**：在本機執行下列指令，預期逾時。
+
+```
+nc -zv -w 5 $(terraform output -raw db_address) 3306
+```
+
+4. **檢核點 4**：
+   - 正向：以 `terraform output -raw ssh_command` 取得的指令登入 Web server，執行 `nc -zv <db_address> 3306`，預期成功。
+   - 反向：在 AWS web console 於 `subnet-yiweee-public-1a` 臨時起一台 EC2，掛一個新建的 SG（只放行維護人員 IP 連 22），登入後執行同一行 `nc`，預期逾時。測試完後刪除這台 EC2 與臨時 SG。
+5. **檢核點 5**：在 WordPress 後台發一篇文章，然後在 Web server 執行下列指令，看得到剛發的標題即通過。
+
+```
+mysql -h <db_address> -u wp -p wordpress -e "SELECT post_title FROM wp_posts WHERE post_status='publish';"
+```
 
 ## 部署資源
 
@@ -94,7 +121,7 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 | 📖 [快速開始](docs/QUICKSTART.md)                 | 5 分鐘快速部署指南           |
 | 📚 [詳細部署指南](docs/SETUP.md)                  | 完整的部署步驟和驗證流程     |
 | 🏗️ [項目結構](docs/PROJECT_STRUCTURE.md)          | Terraform 檔案和專案組織說明 |
-| 🔧 [實作調整總結](docs/IMPLEMENTATION_SUMMARY.md) | 本次實作的改進和評分         |
+| 🔧 [實作調整總結](docs/IMPLEMENTATION_SUMMARY.md) | P0-2 實作調整的歷史紀錄      |
 | 💻 [應用層配置](app/README.md)                    | WordPress 應用層說明         |
 
 # P1-2 | WordPress + 維運 Agent
@@ -144,7 +171,7 @@ flowchart LR
 
 1. Web：在 ec2-yiweee 上安裝 CloudWatch Agent，將 Apache 的 access log 與 error log 送進 CloudWatch Logs。
 2. DB：直接使用 RDS 內建指標（連線數、CPU 等）與 instance 狀態，不開啟 RDS 的 log 匯出。本階段的故障情境（見「故障情境設計」）是在 SG 層擋掉連線，請求到不了 MySQL，RDS log 不會有紀錄，因此不需為此更動 RDS。
-3. 因此建置上只有 Web server 需要更動，新增兩項：IAM role 的 CloudWatch 寫入權限、user_data 安裝 CloudWatch Agent。
+3. 因此建置上只有 Web server 需要更動，新增三項：IAM role 的 CloudWatch 寫入權限、user_data 安裝 CloudWatch Agent、`wp-config.php` 開啟 `WP_DEBUG`（不顯示在頁面上），讓連不上 DB 等錯誤寫進 Apache error log 供 Agent 判讀。
 
 ### 偵測（何時叫醒 Agent）
 
@@ -158,8 +185,9 @@ flowchart LR
 
 1. 維運 Agent 本體是 CloudWatch investigations（原為 Amazon Q Developer Operational Investigations）。在帳號內建立一個 investigation group，並把它設為 Alarm 的 action，Alarm 一響就自動開始調查。
 2. CloudWatch investigations 會自行掃描相關的日誌、指標與 CloudTrail 的變更紀錄，產出「根因假設 + 建議處置」。
-3. 調查結果在 CloudWatch 的 investigations 頁面查看，不會主動寄給維護人員。
-4. 本階段為了更加活用既有的 AWS 服務，採用 CloudWatch investigations，Agent 本體就是 AWS 上的受管服務，已符合「非只在本機執行」的要求，因此不另外採 Bedrock/LangChain + Lambda 自建 Agent。
+3. 帳號內還有其他專案的資源，因此所有資源都帶上 `Project = yiweee` 標籤，並在 investigation group 以這個標籤劃定範圍，讓調查能辨識哪些資源屬於同一個系統。
+4. 調查結果在 CloudWatch 的 investigations 頁面查看，不會主動寄給維護人員。
+5. 本階段為了更加活用既有的 AWS 服務，採用 CloudWatch investigations，Agent 本體就是 AWS 上的受管服務，已符合「非只在本機執行」的要求，因此不另外採 Bedrock/LangChain + Lambda 自建 Agent。
 
 ### 處置
 
@@ -171,7 +199,7 @@ flowchart LR
 1. 主情境選「DB 連不上」：手動移除 DB SG 的 3306 inbound 規則。
 2. WordPress 連不上 DB 時會回 HTTP 500，因此一個情境同時涵蓋「網站 500」與「DB 連不上」兩種症狀。
 3. 選這個做法的理由：不需停 RDS（停止與啟動各要數分鐘）、用 `terraform apply` 即可還原。
-4. 移除 SG 規則後封包會被丟棄但不會拒絕連線，WordPress 會卡到連線逾時後才回 500，實際等待時間待建置後測試。
+4. 移除 SG 規則後封包會被丟棄但不會拒絕連線，WordPress 會卡到連線逾時後才回 500，實測每個請求約等 60 秒。
 5. 預期的判讀路徑：Web 日誌出現 500 → RDS 本身狀態正常 → CloudTrail 的變更紀錄顯示 DB SG 剛被移除 3306 規則。
 
 ## 權限與 Credential 管理
@@ -183,18 +211,65 @@ flowchart LR
 5. SNS 告警信箱訂閱需要人工點確認信，且告警信箱應寫在 `*.tfvars`，沿用 P0-2 的 `.gitignore`。
 6. Log group 設定保留天數，避免日誌（含訪客 IP）無限累積。
 
-## 檢核點驗證規劃
+## 檢核點驗證步驟
 
-- **檢核點 1**：CloudWatch investigations 調查頁面列出它引用的 Web 日誌與 RDS 指標（截圖）。此項取決於調查能否從告警指標關聯到 Web 日誌與 RDS 指標，建置後優先驗證；若未自動引用，改在調查中手動加入 log group 與 RDS 指標。
-- **檢核點 2**：移除 3306 規則並以 `curl` 發出請求觸發 Alarm 後，CloudWatch investigations 調查頁面的根因假設指向 DB 連線失敗與 DB SG，並附上建議處置（截圖）。此處的 `curl` 逾時要設得比 WordPress 等待時間還長，否則 `curl` 會先放棄，拿不到 500。
-- **檢核點 3**：整理一次完整時間軸：移除 3306 規則 → `curl` 回 500、Alarm 觸發並寄出告警信 → CloudWatch investigations 調查完成 → 依建議 `terraform apply` 還原 → `curl` 回 200。`curl` 設定同「檢核點 2」。
-- **檢核點 4**：AWS web console 上的 investigation group，以及由 Alarm 自動觸發的調查紀錄（截圖），證明 Agent 是 AWS 上的受管服務，不是在本機執行。
+四個檢核點是同一次故障演練從不同角度取證，依下列順序做一次即可全部涵蓋。本節可獨立執行，不需先做過 P0-2 的驗證；以下指令都在 `infra/` 目錄下執行。
+
+### 部署
+
+已依 P0-2 的步驟部署並完成 WordPress 安裝者，可直接跳到「演練前確認」。
+
+1. 確認 `terraform.tfvars` 的 `admin_cidr` 是目前的對外 IP（`curl -s https://checkip.amazonaws.com`），`alarm_email` 是收得到信的信箱。
+2. 執行 `terraform apply`，RDS 建立約需 5 到 10 分鐘。
+3. 到信箱點擊 AWS Notifications 的確認連結，否則收不到告警信。
+4. 等待 user_data 執行完成。以 `terraform output -raw ssh_command` 取得的指令登入 Web server，執行 `sudo tail /var/log/cloud-init-output.log`，最後一行出現 `CloudWatch Agent setup complete!` 才算完成。
+5. 用瀏覽器開啟 `terraform output -raw wordpress_url` 的網址，完成 WordPress 安裝。未安裝時首頁只會回 302 導向安裝頁，演練最後無法以 `200` 確認恢復。
+
+### 演練前確認
+
+1. 發一次請求，預期回 `200`，同時在 access log 留下一筆紀錄：
+
+```
+eval "$(terraform output -raw fault_probe_command)"
+```
+
+2. CloudWatch 的 log group `/yiweee/web/apache/access` 裡有一條以 instance ID 命名的 log stream，且看得到上一步的請求。日誌送達約需一分鐘。
+3. Alarm `alarm-yiweee-http-5xx` 的狀態是 INSUFFICIENT_DATA（預期狀態）。
+
+### 演練
+
+1. 注入故障並記下時間：
+
+```
+eval "$(terraform output -raw fault_inject_command)"
+```
+
+2. 發出請求產生 500。每次請求約等 60 秒才回 `500`，可多發幾次：
+
+```
+eval "$(terraform output -raw fault_probe_command)"
+```
+
+3. 確認偵測：Alarm 在一兩分鐘內轉為 ALARM，信箱收到告警信。
+4. 查看判讀：到 CloudWatch 的 investigations 頁面，會有一筆由 Alarm 自動建立的調查，等待調查完成後截圖。
+   - **檢核點 1**：調查引用的 Web 日誌與 RDS 指標。若未自動引用，在調查中手動加入 log group 與 RDS 指標。
+   - **檢核點 2**：根因假設（預期指向 DB 連線失敗與 DB SG 的 3306 規則被移除）與建議處置。
+   - **檢核點 4**：investigation group `ig-yiweee` 與這筆由 Alarm 觸發的調查紀錄。
+5. 處置並確認恢復：執行 `terraform apply` 還原 3306 規則，再執行一次步驟 2 的指令，預期回 `200`。
+6. **檢核點 3**：將步驟 1 到 5 的時間點整理成時間軸。
+
+### 清理
+
+1. 到 CloudWatch 的 investigations 頁面，把所有調查結束並封存。investigation group 內還有進行中的調查時無法刪除，而 `terraform destroy` 不會回報這個錯誤，殘留的 group 會讓下次 `terraform apply` 失敗。
+2. 執行 `terraform destroy`，避免 RDS 與 EC2 持續計費。
 
 ## 部署資源
 
 | 文件                                                             | 說明                                                                       |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| 📝 `infra/monitoring.tf`（待建）                                 | 觀測與偵測：Log group、metric filter、Alarm、SNS                           |
-| 📝 `infra/agent.tf`（待建）                                      | 維運 Agent：CloudWatch investigations 的 investigation group 與其 IAM role |
-| 🔧 `infra/compute.tf`、`infra/user_data.sh`（待修改）            | Web server 的 IAM 權限與 CloudWatch Agent 安裝                             |
+| 📝 [`infra/monitoring.tf`](infra/monitoring.tf)                  | 觀測與偵測：Log group、metric filter、Alarm、SNS                           |
+| 📝 [`infra/agent.tf`](infra/agent.tf)                            | 維運 Agent：CloudWatch investigations 的 investigation group 與其 IAM role |
+| 🔧 `infra/compute.tf`、`infra/user_data.sh`                      | Web server 的 IAM 權限、CloudWatch Agent 安裝與 `WP_DEBUG`                 |
+| 🔧 `infra/provider.tf`                                           | 新增 `awscc`、`time` provider 與 `default_tags` 的 `Project` 標籤          |
+| 🔧 `infra/variables.tf`、`infra/outputs.tf`                      | 新增 `alarm_email`、`log_retention_days`，以及故障注入與驗證用的指令輸出   |
 | 📖 [CloudWatch 練習](practice/cloudwatch/CLOUDWATCH_PRACTICE.md) | CloudWatch 操作練習紀錄                                                    |

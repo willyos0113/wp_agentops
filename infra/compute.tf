@@ -1,3 +1,36 @@
+# ========================================
+# Terraform Compute Resource Configuration
+# ========================================
+
+# === 資源關係流程（各資源如何組成 EC2）===
+# 金鑰：
+# [ tls_private_key ] ──► [ local_file ] (私鑰存成本機 yiweee.pem)
+#        │
+#        ▼ (公鑰上傳到 AWS)
+# [ aws_key_pair ] ──► (給 EC2：SSH 登入金鑰)
+#
+# 權限：
+# [ aws_iam_role ] ◄── [ aws_iam_role_policy_attachment ] (ssm_access、cloudwatch_agent：把政策附加到 Role)
+#        │
+#        ▼ (把 Role 包裝成 EC2 可掛載的形式)
+# [ aws_iam_instance_profile ] ──► (給 EC2：SSM 連線與寫入日誌的權限)
+#
+# 資料庫：
+# [ aws_db_subnet_group ]
+#        │
+#        ▼ (指定 RDS 可放置的 private subnet)
+# [ aws_db_instance ] ──► (給 EC2：資料庫位址與名稱，寫進 user_data.sh)
+#
+# 映像檔與日誌：
+# [ data.aws_ami ] ──► (給 EC2：最新的 Ubuntu 22.04 映像檔 ID)
+# [ aws_cloudwatch_log_group ] ──► (給 EC2：log group 名稱，寫進 user_data.sh，定義在 monitoring.tf)
+#
+# 主機：
+# [ aws_instance ] (收齊以上各項後建立，開機時執行 user_data.sh)
+#        │
+#        ▼ (執行期：WordPress 讀寫資料)
+# [ aws_db_instance ]
+
 # === EC2 SSH 金鑰對 ===
 resource "tls_private_key" "yiweee" { # 生成一個 4096 位元的 RSA 私鑰
   algorithm = "RSA"
@@ -47,8 +80,10 @@ resource "aws_instance" "web" { # 建立 WordPress EC2 instance
     db_password        = var.db_wp_password
     db_master_password = var.db_master_password
     db_host            = aws_db_instance.yiweee.address
-  })) # 傳送給 aws 腳本，記得用 base64 編碼，確保特殊字元在 protocol 解析文本時不會被破壞
-  iam_instance_profile   = aws_iam_instance_profile.web.name # 讓 EC2 可以使用 IAM Role 
+    access_log_group   = aws_cloudwatch_log_group.apache_access.name
+    error_log_group    = aws_cloudwatch_log_group.apache_error.name
+  }))                                                      # 傳送給 aws 腳本，記得用 base64 編碼，確保特殊字元在 protocol 解析文本時不會被破壞
+  iam_instance_profile = aws_iam_instance_profile.web.name # 讓 EC2 可以使用 IAM Role 
 
   root_block_device { # 設定 EC2 的根磁碟
     delete_on_termination = true
@@ -64,13 +99,14 @@ resource "aws_instance" "web" { # 建立 WordPress EC2 instance
   }
 
   depends_on = [
-    aws_db_instance.yiweee,                   # 確保 RDS MySQL 建立完成後再建立 EC2
-    aws_iam_role_policy_attachment.ssm_access # 確保 IAM Role 的 SSM 存取權限附加完成後再建立 EC2
-    ]
+    aws_db_instance.yiweee,                         # 確保 RDS MySQL 建立後再創建 EC2
+    aws_iam_role_policy_attachment.ssm_access,      # 確保 IAM Role 的 SSM 建立後再創建 EC2
+    aws_iam_role_policy_attachment.cloudwatch_agent # 確保 IAM Role 的 CloudWatch Agent 建立後再創建 EC2
+  ]
 }
 
 # === IAM Role 與 Instance Profile 設定 ===
-resource "aws_iam_role" "web" { # 建立一個 IAM Role，讓 EC2 可以使用 SSM 連線
+resource "aws_iam_role" "web" { # 建立一個 IAM Role，讓 EC2 可以使用 SSM 連線、把日誌寫入 CloudWatch Logs
   name = "role-yiweee-web"
 
   assume_role_policy = jsonencode({
@@ -90,8 +126,13 @@ resource "aws_iam_role" "web" { # 建立一個 IAM Role，讓 EC2 可以使用 S
 }
 
 resource "aws_iam_role_policy_attachment" "ssm_access" { # 將 SSM 政策附加到 IAM Role 上，讓 EC2 可以使用 SSM 連線
-  role       = aws_iam_role.web.name 
+  role       = aws_iam_role.web.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy_attachment" "cloudwatch_agent" { # 讓 EC2 上的 CloudWatch Agent 可以把日誌寫入 CloudWatch Logs
+  role       = aws_iam_role.web.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
 resource "aws_iam_instance_profile" "web" { # 建立一個 IAM Instance Profile，讓 EC2 可以使用 IAM Role 
@@ -100,7 +141,7 @@ resource "aws_iam_instance_profile" "web" { # 建立一個 IAM Instance Profile�
 }
 
 # === RDS MySQL 設定 ===
-resource "aws_db_subnet_group" "yiweee" { # RDS 預設需要一個 DB Subnet Group(這裡用兩個 private subnet)
+resource "aws_db_subnet_group" "yiweee" { # RDS 預設需要一個 DB Subnet Group(這裡引用 pri_1a 與 pri_1c 兩個 private subnet)
   name       = "dbsg-yiweee"
   subnet_ids = [aws_subnet.private_1a.id, aws_subnet.private_1c.id]
 
@@ -118,7 +159,7 @@ resource "aws_db_instance" "yiweee" { # 建立一個 RDS MySQL instance
   db_subnet_group_name   = aws_db_subnet_group.yiweee.name
   vpc_security_group_ids = [aws_security_group.db.id]
   db_name                = "wordpress" # 建立一個名為 wordpress 的資料庫
-  username               = "master" # DB 的 master 帳號
+  username               = "master"    # DB 的 master 帳號
   password               = var.db_master_password
   availability_zone      = "${var.aws_region}a" # RDS 放於 private subnet 1a(另一個預留，但不使用)
   publicly_accessible    = false

@@ -1,5 +1,7 @@
 # 實作調整總結
 
+> **歷史紀錄**：本文件記錄 P0-2 階段把舊的 GitLab 配置改寫為 WordPress Web/DB 分離架構的過程，內容停在當時的狀態，不含 P1-2 新增的監控與維運 Agent（`monitoring.tf`、`agent.tf`、`awscc` 與 `time` provider）。現況請看 [README](../README.md) 與 [項目結構說明](PROJECT_STRUCTURE.md)。
+
 ## 📋 分析結果
 
 ### README 規劃評估
@@ -53,7 +55,7 @@
 - ✅ 提供變數配置範本
 - ✅ 包含密碼、管理員 IP 等必要設定說明
 
-#### `SETUP.md`
+#### `docs/SETUP.md`
 - ✅ 詳細的部署步驟指南
 - ✅ 前置條件和環境準備
 - ✅ 部署後驗證流程
@@ -107,7 +109,7 @@
    terraform apply
    ```
 
-4. **驗證部署** (參考 SETUP.md 的驗證部分)
+4. **驗證部署** (參考 [README](../README.md) 的檢核點驗證步驟)
 
 ---
 
@@ -121,8 +123,8 @@
 ### 安全性改進
 - ✅ **密碼分離**: Master password 和 WordPress password 分別使用
   - RDS 連接測試、用戶建立 → 使用 `${db_master_password}`
-  - WordPress 配置 → 使用 `${db_wp_password}`
-- ✅ **Salt Key 隨機值**: 8 個 WordPress Salt Key 已替換為安全的隨機字符串
+  - WordPress 配置 → 使用 `var.db_wp_password`（傳入 user_data 時名為 `db_password`）
+- ✅ **Salt Key 隨機值**: 8 個 WordPress Salt Key 已替換為隨機字符串（固定寫在 `user_data.sh`，每次部署相同）
 - ✅ **變數映射完整**: `compute.tf` 的 templatefile 包含 `db_master_password`
 
 ### 配置完整性
@@ -131,9 +133,9 @@
 - ✅ **變數無預設**: 網路配置變數（vpc_cidr、subnet CIDR）無預設值，強制明確指定
 
 ### 架構認證
-- ✅ **依賴邏輯**: EC2 depends_on [RDS, IAM Policy] 確保執行順序
-- ✅ **變數完整性**: 11 個變數全部參照完整，無遺漏
-- ✅ **命名規範**: 資源命名一致，變數 snake_case，輸出 camelCase
+- ✅ **依賴邏輯**: EC2 depends_on [RDS, IAM Policy] 確保執行順序（P1-2 後 IAM Policy 有 SSM 與 CloudWatch Agent 兩項）
+- ✅ **變數完整性**: 所有變數全部參照完整，無遺漏（當時 12 個，P1-2 後為 14 個）
+- ✅ **命名規範**: 資源命名一致，變數與輸出皆為 snake_case
 
 ### 輸出完善
 - ✅ **部署資訊齊全**: VPC、Subnet、EC2、RDS、SG、密鑰等全部輸出

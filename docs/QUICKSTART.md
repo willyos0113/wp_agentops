@@ -14,7 +14,7 @@ cd infra/
 # 複製配置
 cp terraform.tfvars.example terraform.tfvars
 
-# 編輯配置（改成你的 IP 和密碼）
+# 編輯配置（改成你的 IP、密碼和信箱）
 nano terraform.tfvars  # 或用你的編輯器
 ```
 
@@ -38,13 +38,16 @@ terraform apply
 # 等待部署完成
 ```
 
+部署完成後還有兩件事：
+
+1. 到信箱點擊 AWS Notifications 的確認連結，否則收不到告警信。
+2. 等待 user_data 執行完成。登入 Web server 執行 `sudo tail /var/log/cloud-init-output.log`，最後一行出現 `CloudWatch Agent setup complete!` 才算完成。
+
 ### 步驟 4：驗證（2 分鐘）
 
 ```bash
-# 複製 Terraform output 中的 WordPress URL
-# 在瀏覽器中訪問
-
-http://<ec2_public_ip>
+# 取得 WordPress URL，在瀏覽器中訪問並完成安裝
+terraform output -raw wordpress_url
 ```
 
 ---
@@ -61,37 +64,48 @@ db_master_password = "MyMaster#2024"
 # 3. WordPress 密碼（8+ 字，大小寫+數字+特殊字)
 db_wp_password = "MyWP#2024"
 
-# 可選：改變區域或實例類型
+# 4. 接收告警信的信箱
+alarm_email = "you@example.com"
+
+# 可選：改變區域、實例類型或日誌保留天數
 # aws_region = "ap-northeast-1"
 # instance_type = "t3.micro"
+# log_retention_days = 14
 ```
+
+VPC 與 Subnet 的 CIDR 也是必填，`terraform.tfvars.example` 已填好，不需更動。
 
 ---
 
 ## 🔍 快速驗證
 
+以下指令都在 `infra/` 目錄下執行。完整的檢核點驗證步驟（含 P1-2 的故障演練）見 [README](../README.md)。
+
 ### 檢查 WordPress 可訪問
 ```bash
-curl -I http://<ec2_public_ip>
-# 應回傳 302 或 200
+curl -I $(terraform output -raw wordpress_url)
+# 未安裝時回傳 302，安裝完成後回傳 200
 ```
 
 ### 檢查 RDS 隔離
 ```bash
-# 從本機嘗試連接（應超時）
-mysql -h <rds_endpoint> -u master -p
-# 控制+C 退出
+# 從本機嘗試連接（應逾時）
+nc -zv -w 5 $(terraform output -raw db_address) 3306
 ```
 
 ### 檢查資料持久化
 ```bash
-# SSH 進入 EC2
-ssh -i yiweee.pem ubuntu@<ec2_public_ip>
+# 取得 SSH 指令並登入 EC2
+terraform output -raw ssh_command
 
-# 查詢 WordPress 資料
-mysql -h <rds_endpoint> -u wp -p<password> wordpress -e \
-  "SELECT post_title FROM wp_posts WHERE post_type='post';"
+# 查詢 WordPress 資料（<db_address> 為 terraform output -raw db_address 的值）
+mysql -h <db_address> -u wp -p wordpress -e \
+  "SELECT post_title FROM wp_posts WHERE post_status='publish';"
 ```
+
+### 檢查日誌與告警
+- CloudWatch 的 log group `/yiweee/web/apache/access` 有一條以 instance ID 命名的 log stream。
+- Alarm `alarm-yiweee-http-5xx` 的狀態是 INSUFFICIENT_DATA（沒有 5xx 時的預期狀態）。
 
 ---
 
@@ -104,10 +118,10 @@ terraform show
 # 獲取輸出值
 terraform output
 
-# 銷毀所有資源（小心！）
+# 銷毀所有資源（小心！先封存 CloudWatch investigations 的所有調查）
 terraform destroy
 
-# 查看成本預估
+# 列出將建立的資源
 terraform plan -json | jq '.resource_changes[] | select(.change.actions[] | select(. == "create"))'
 ```
 
@@ -115,9 +129,10 @@ terraform plan -json | jq '.resource_changes[] | select(.change.actions[] | sele
 
 ## 📚 更多信息
 
-- [詳細部署指南](SETUP.md) - 完整的部署步驟和驗證流程
+- [架構規劃與驗證步驟](../README.md) - P0-2、P1-2 的設計與檢核點
+- [詳細部署指南](SETUP.md) - 完整的部署步驟
 - [項目架構](PROJECT_STRUCTURE.md) - Terraform 檔案和專案組織說明
-- [實作調整](IMPLEMENTATION_SUMMARY.md) - 代碼質量和安全性改進
+- [實作調整](IMPLEMENTATION_SUMMARY.md) - P0-2 的歷史紀錄
 - [WordPress 應用層](../app/README.md) - 應用層配置說明
 
 ---
@@ -126,18 +141,22 @@ terraform plan -json | jq '.resource_changes[] | select(.change.actions[] | sele
 
 1. ✅ **備份 terraform.tfvars** — 包含敏感信息
 2. ✅ **檢查 .gitignore** — 確保 *.pem 和 *.tfvars 不被提交
-3. ✅ **保存 SSH 密鑰** — yiweee.pem 是唯一的連接方式
+3. ✅ **保存 SSH 密鑰** — yiweee.pem 是 SSH 登入的唯一憑證（另可用 SSM Session Manager 連線）
 4. ✅ **注意 AWS 費用** — 部署後會產生費用，記得用完後執行 destroy
+5. ✅ **destroy 前先封存調查** — investigation group 內還有進行中的調查時無法刪除，殘留的 group 會讓下次 apply 失敗
 
 ---
 
 ## 🚀 部署後檢查清單
 
+- [ ] 已點擊 SNS 確認信
+- [ ] user_data 執行完成
 - [ ] WordPress 前端可訪問
 - [ ] RDS 無外網連接（本機連不到）
 - [ ] EC2 可連接 RDS
 - [ ] 發佈測試文章
-- [ ] 重啟 EC2 後文章仍存在
+- [ ] 重整後文章仍存在
+- [ ] Apache 日誌已送進 CloudWatch Logs
 - [ ] 備份 terraform.tfvars
 - [ ] 備份 SSH 密鑰 (yiweee.pem)
 
@@ -148,17 +167,12 @@ terraform plan -json | jq '.resource_changes[] | select(.change.actions[] | sele
 無需 SSH 密鑰也能連接 EC2：
 
 ```bash
-# 列出 EC2 實例
-aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=ec2-yiweee" \
-  --query 'Reservations[0].Instances[0].InstanceId' \
-  --region ap-northeast-1
-
 # 啟動會話
-aws ssm start-session --target <instance-id> --region ap-northeast-1
+aws ssm start-session --target $(terraform output -raw web_ec2_id) \
+  --region ap-northeast-1 --profile course
 
 # 在會話中執行命令
-mysql -h <rds_endpoint> -u wp -p
+mysql -h <db_address> -u wp -p
 ```
 
 ---

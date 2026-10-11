@@ -13,11 +13,10 @@
 
 ```
 app/
-├── plugins/          # WordPress 插件（可選）
-├── themes/           # 自定義主題（可選）
-├── wp-config/        # WordPress 配置片段（可選）
 └── README.md         # 本檔案
 ```
+
+目前只有本說明檔。日後需要時可自行新增 `plugins/`（插件）、`themes/`（主題）、`wp-config/`（配置片段）等子目錄。
 
 ## 說明
 
@@ -39,7 +38,7 @@ app/
 - 安全設定
 
 ### 2. 添加插件
-將插件放在 `app/plugins/` 目錄中，然後在 `user_data.sh` 中添加複製命令：
+將插件放在 `app/plugins/` 目錄中，然後在 `user_data.sh` 中添加複製命令。目前沒有把 `app/` 傳到 EC2 的機制，需先自行補上（例如從 S3 或 git 下載到 `/tmp/app`）：
 
 ```bash
 cp -r /tmp/app/plugins/* /var/www/html/wp-content/plugins/
@@ -60,10 +59,11 @@ cp -r /tmp/app/plugins/* /var/www/html/wp-content/plugins/
    ├─ 啟用 Apache 模組（rewrite、ssl）
    ├─ 下載並解壓 WordPress
    ├─ 設置檔案權限（www-data）
-   ├─ 生成 wp-config.php（含 Salt Key）
+   ├─ 生成 wp-config.php（含 Salt Key、WP_DEBUG）
    ├─ 等待 RDS 就緒
-   ├─ 建立 WordPress 資料庫用戶（wp@10.0.%.%）
-   └─ 啟動 Apache
+   ├─ 建立 WordPress 資料庫用戶（wp@10.0.%）
+   ├─ 重啟 Apache
+   └─ 安裝並啟動 CloudWatch Agent（將 Apache 日誌送進 CloudWatch Logs）
    ```
 
 ## 訪問 WordPress
@@ -72,11 +72,11 @@ cp -r /tmp/app/plugins/* /var/www/html/wp-content/plugins/
 
 ### 方式 A: 直接訪問公網 IP
 ```bash
-# 使用 Terraform output 中的 WordPress URL
-http://<ec2_public_ip>
+# 在 infra/ 目錄下取得 WordPress URL
+terraform output -raw wordpress_url
 
-# 或手動拼接
-curl -I http://<ec2_public_ip>
+# 或直接檢查回應
+curl -I $(terraform output -raw wordpress_url)
 ```
 
 ### 方式 B: 使用 SSH 連接進行維護
@@ -85,7 +85,7 @@ curl -I http://<ec2_public_ip>
 ssh -i infra/yiweee.pem ubuntu@<ec2_public_ip>
 
 # 或使用 SSM Session Manager（推薦）
-aws ssm start-session --target <instance-id> --region ap-northeast-1
+aws ssm start-session --target <instance-id> --region ap-northeast-1 --profile course
 ```
 
 ## WordPress 初始設置
@@ -102,18 +102,19 @@ aws ssm start-session --target <instance-id> --region ap-northeast-1
 若需直接連接 MySQL：
 
 ```bash
-# 在 EC2 上執行
-mysql -h <rds_endpoint> -u wp -p<db_wp_password> wordpress
+# 在 EC2 上執行（<db_address> 為 terraform output -raw db_address 的值，不含 port）
+mysql -h <db_address> -u wp -p wordpress
 
 # 查詢文章
-SELECT post_title, post_date FROM wp_posts WHERE post_type='post';
+SELECT post_title, post_date FROM wp_posts WHERE post_status='publish';
 ```
 
 ## 架構特性
 
 - ✅ **自動化部署** — user_data.sh 完全自動化
 - ✅ **安全隔離** — RDS 在私有子網，只允許 EC2 連接
-- ✅ **Salt Key 隨機化** — 8 個 WordPress 密鑰已隨機生成
+- ✅ **Salt Key 已設定** — 8 個 WordPress 密鑰為固定值，寫在 `user_data.sh`（每次部署相同）
+- ✅ **日誌集中** — Apache access / error log 由 CloudWatch Agent 送進 CloudWatch Logs
 - ✅ **跨 AZ 準備** — 支持未來 RDS Multi-AZ 升級
 - ✅ **版本一致** — Ubuntu 22.04 LTS、Apache2、PHP 8+、MySQL 8.0
 

@@ -20,3 +20,9 @@ db_wp_password = "ChangeMe!Wordpress456"
 instance_type       = "t3.micro"
 db_instance_class   = "db.t3.micro"
 db_storage_size     = 20
+
+# Email address that receives alarm notifications
+# After `terraform apply`, click the confirmation link in the email from AWS Notifications
+alarm_email = "you@example.com"
+
+log_retention_days = 14

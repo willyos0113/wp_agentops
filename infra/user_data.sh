@@ -1,4 +1,31 @@
 #!/bin/bash
+# === 執行流程（EC2 第一次開機時以 root 執行一次，由上往下依序進行）===
+# [ Terraform templatefile ] (送到 EC2 之前，先把變數佔位符換成實際值，見 compute.tf)
+#        │
+#        ▼
+# [ 更新系統 ] (apt update / upgrade)
+#        │
+#        ▼
+# [ 安裝 Apache、PHP、MySQL client ] ──► (啟用 rewrite，允許 .htaccess 生效)
+#        │
+#        ▼
+# [ 下載 WordPress ] ──► (解壓到 /var/www/html，擁有者改為 www-data)
+#        │
+#        ▼
+# [ 寫出 wp-config.php ] (WordPress 連 DB 用的資訊)
+#        │
+#        ▼ (每 10 秒重試，直到 RDS 連得上)
+# [ 建立 WordPress 的 DB 使用者 ] (用 master 帳號登入 RDS 建立)
+#        │
+#        ▼
+# [ 重啟 Apache ] ──► (WordPress 上線)
+#        │
+#        ▼
+# [ 安裝 CloudWatch Agent ]
+#        │
+#        ▼ (寫出設定檔：要讀哪些 log 檔、送到哪個 log group)
+# [ 啟動 CloudWatch Agent ] ──► (Apache 日誌開始送往 CloudWatch Logs)
+
 set -e
 
 # === Update system ===
@@ -71,7 +98,9 @@ define('NONCE_SALT',       '.32M;hlz@3E97(NG-^h&)IRo|M^??:zD.?+v!1I>/yL?yw9W[_FN
 
 $table_prefix = 'wp_';
 
-define('WP_DEBUG', false);
+// 開啟除錯但不顯示在頁面上：連不上 DB 等錯誤會寫進 Apache error log，供 CloudWatch investigations 判讀
+define('WP_DEBUG', true);
+define('WP_DEBUG_DISPLAY', false);
 
 if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );
@@ -101,3 +130,43 @@ MYSQLEOF
 systemctl restart apache2
 
 echo "WordPress setup complete!"
+
+# === 安裝並設置 CloudWatch Agent（將 Apache 日誌送進 CloudWatch Logs）===
+# Download and install the CloudWatch Agent
+# note: after installation, the deb file will be removed to save disk space
+wget -q https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb -O /tmp/amazon-cloudwatch-agent.deb
+dpkg -i -E /tmp/amazon-cloudwatch-agent.deb
+rm /tmp/amazon-cloudwatch-agent.deb
+
+# Create CloudWatch Agent configuration file
+# note1: `{instance_id}` will be replaced by the CloudWatch Agent
+# note2: `${access_log_group}` and `${error_log_group}` will be replaced by Terraform
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CWEOF'
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/apache2/access.log",
+            "log_group_name": "${access_log_group}",
+            "log_stream_name": "{instance_id}"
+          },
+          {
+            "file_path": "/var/log/apache2/error.log",
+            "log_group_name": "${error_log_group}",
+            "log_stream_name": "{instance_id}"
+          }
+        ]
+      }
+    }
+  }
+}
+CWEOF
+
+# Start the CloudWatch Agent
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 -s \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+echo "CloudWatch Agent setup complete!"

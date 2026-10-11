@@ -1,3 +1,26 @@
+# ========================================
+# Terraform Network Configuration
+# ========================================
+
+# === 網路流量流程（以下資源全部建在 aws_vpc 這個容器內）===
+# [ Internet ]
+#        │
+#        ▼
+# [ aws_internet_gateway ] (VPC 對外的出入口)
+#        │
+#        ▼ (aws_route_table.public：0.0.0.0/0 指向 IGW)
+# [ aws_subnet.public_1a ] (放 EC2)
+#        │
+#        ▼ (aws_security_group.web：放行 HTTP 80、管理者 IP 的 SSH 22)
+# [ EC2 ] (定義在 compute.tf)
+#        │
+#        ▼ (aws_security_group.db：只放行來自 web SG 的 MySQL 3306)
+# [ aws_subnet.private_1a / private_1c ] (放 RDS，實際在 1a；aws_route_table.private 只有 VPC 內部路由，不通外網)
+#
+# 兩種「綁定用」的資源：
+# [ aws_route_table_association ] ──► (把 route table 綁到 subnet)
+# [ aws_security_group_rule ] ──► (把放行規則掛到 security group；SG 本身只是空殼)
+
 # === 設定 VPC 內部網路區塊 ===
 resource "aws_vpc" "yiweee" { # 建立一個 VPC
   cidr_block           = var.vpc_cidr

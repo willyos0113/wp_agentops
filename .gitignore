@@ -29,6 +29,10 @@ terraform.rc
 !.env.example
 wp-config.php
 
+# 驗證結果（截圖、指令輸出可能含帳號 ID、IP、信箱等敏感資訊），只保留資料夾本身
+verification/*
+!verification/.gitkeep
+
 # 作業系統與編輯器
 .DS_Store
 Thumbs.db
