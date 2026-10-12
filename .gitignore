@@ -39,3 +39,7 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# 簡報素材：只版控大綱，截圖與簡報檔留在本機
+slides/*
+!slides/*.md
