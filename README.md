@@ -229,8 +229,16 @@ flowchart LR
 
 1. 發一次請求，預期回 `200`，同時在 access log 留下一筆紀錄：
 
+macOS / Linux（Windows 的 Git Bash 亦同）：
+
 ```
 eval "$(terraform output -raw fault_probe_command)"
+```
+
+Windows（PowerShell）：
+
+```
+curl.exe -s -o NUL -w '%{http_code}\n' --max-time 300 (terraform output -raw wordpress_url)
 ```
 
 2. CloudWatch 的 log group `/yiweee/web/apache/access` 裡有一條以 instance ID 命名的 log stream，且看得到上一步的請求。日誌送達約需一分鐘。
@@ -240,14 +248,30 @@ eval "$(terraform output -raw fault_probe_command)"
 
 1. 注入故障並記下時間：
 
+macOS / Linux（Windows 的 Git Bash 亦同）：
+
 ```
 eval "$(terraform output -raw fault_inject_command)"
 ```
 
+Windows（PowerShell）：
+
+```
+Invoke-Expression (terraform output -raw fault_inject_command)
+```
+
 2. 發出請求產生 500。每次請求約等 60 秒才回 `500`，可多發幾次：
+
+macOS / Linux（Windows 的 Git Bash 亦同）：
 
 ```
 eval "$(terraform output -raw fault_probe_command)"
+```
+
+Windows（PowerShell）：
+
+```
+curl.exe -s -o NUL -w '%{http_code}\n' --max-time 300 (terraform output -raw wordpress_url)
 ```
 
 3. 確認偵測：Alarm 在一兩分鐘內轉為 ALARM，信箱收到告警信。
