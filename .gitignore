@@ -40,6 +40,6 @@ desktop.ini
 .vscode/
 .idea/
 
-# 簡報素材：只版控大綱，截圖與簡報檔留在本機
-slides/*
-!slides/*.md
+# 簡報素材：截圖與機密資料留在本機，其餘納入版控
+slides/screenshots/
+slides/secrets/
