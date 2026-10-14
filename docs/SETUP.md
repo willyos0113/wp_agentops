@@ -8,8 +8,8 @@
 
 1. **AWS 帳戶** - 已配置 AWS CLI 且具有適當的 IAM 權限
 2. **Terraform** - 版本 >= 1.0
-3. **公網 IP** - 用於 SSH 維護存取（自己的外部 IP），或使用 SSM Session Manager 替代
-4. **AWS CLI** - 版本 >= 2.0（若使用 SSM 連接）
+3. **公網 IP** - 用於 SSH 維護存取（自己的外部 IP）
+4. **AWS CLI** - 版本 >= 2.0（僅 SSH 無法使用、改走 SSM 時需要，另需 Session Manager plugin）
 
 ## 步驟 1: 準備環境
 
@@ -109,31 +109,28 @@ nc -zv -w 5 $(terraform output -raw db_address) 3306
 # 預期: 連接逾時（無法連接）
 ```
 
-### 驗證 3: 確認 Web 可連接 DB
+### 登入 Web server
 
-#### 方式 A: 使用 SSH（傳統方式）
+以 SSH 登入（主要方式）：
 
 ```bash
-# SSH 進入 Web 伺服器
-ssh -i infra/yiweee.pem ubuntu@<web_ec2_public_ip>
+$(terraform output -raw ssh_command)
+```
 
-# 在 Web 伺服器上測試連接
+EC2 也掛了 `AmazonSSMManagedInstanceCore`，SSH 無法使用時（例如對外 IP 變動、`admin_cidr` 尚未更新）可改用 SSM Session Manager（需 AWS CLI >= 2.0 與 Session Manager plugin）：
+
+```bash
+aws ssm start-session --target $(terraform output -raw web_ec2_id) --region ap-northeast-1 --profile course
+```
+
+以下驗證 3、5 的指令都在登入後的 Web server 上執行。
+
+### 驗證 3: 確認 Web 可連接 DB
+
+```bash
 mysql -h <db_address> -u wp -p
 # 輸入 db_wp_password
 # 執行: SELECT 1;
-```
-
-#### 方式 B: 使用 SSM Session Manager（推薦，更安全）
-
-```bash
-# 查詢 EC2 實例 ID（從 terraform output 或 AWS Console）
-terraform output -raw web_ec2_id
-
-# 連接到 EC2
-aws ssm start-session --target <instance-id> --region ap-northeast-1 --profile course
-
-# 在會話中執行相同的 mysql 命令
-mysql -h <db_address> -u wp -p
 ```
 
 ### 驗證 4: 完成 WordPress 安裝
@@ -144,24 +141,8 @@ mysql -h <db_address> -u wp -p
 
 ### 驗證 5: 驗證資料持久化
 
-#### 方式 A: 使用 SSH
-
 ```bash
-# SSH 進入 Web 伺服器
-ssh -i infra/yiweee.pem ubuntu@<web_ec2_public_ip>
-
-# 查詢 WordPress 文章
-mysql -h <db_address> -u wp -p<db_wp_password> wordpress -e "SELECT post_title FROM wp_posts WHERE post_status='publish';"
-```
-
-#### 方式 B: 使用 SSM Session Manager
-
-```bash
-# 啟動 SSM 會話
-aws ssm start-session --target <instance-id> --region ap-northeast-1 --profile course
-
-# 查詢 WordPress 文章
-mysql -h <db_address> -u wp -p<db_wp_password> wordpress -e "SELECT post_title FROM wp_posts WHERE post_status='publish';"
+mysql -h <db_address> -u wp -p wordpress -e "SELECT post_title FROM wp_posts WHERE post_status='publish';"
 # 應該看到你發佈的文章標題
 ```
 
