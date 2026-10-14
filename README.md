@@ -14,6 +14,18 @@
 4. SG 串接：只允許 Web 的 SG 連 DB:3306
 5. 發一篇文章、重整後仍在（確認寫入 DB）
 
+## 技術棧
+
+| 類別     | 技術                                                       |
+| -------- | ---------------------------------------------------------- |
+| 雲端平台 | AWS（ap-northeast-1）                                      |
+| 網路     | VPC、Subnet、Internet Gateway、Route Table、Security Group |
+| 運算     | EC2 t3.micro（Ubuntu 22.04 LTS）                           |
+| 資料庫   | RDS for MySQL 8.0（db.t3.micro，20 GB）                    |
+| 應用     | WordPress、Apache、PHP、MySQL client 8.0                   |
+| 存取     | SSH、SSM Session Manager、IAM role                         |
+| IaC      | Terraform（`aws`、`tls`、`local` provider）、user_data     |
+
 ## 架構說明
 
 ### 網路設定
@@ -115,6 +127,18 @@ mysql -h <db_address> -u wp -p wordpress -e "SELECT post_title FROM wp_posts WHE
 2. 重現「網站 500」或「DB 連不上」情境，Agent 能定位並給建議
 3. 完整示範一次 偵測 → 判讀 → 處置
 4. Agent 本身也跑在 AWS 上（EC2 或 Lambda），非只在本機執行
+
+## 技術棧
+
+沿用 P0-2 的技術棧，新增以下項目：
+
+| 類別 | 技術                                                              |
+| ---- | ----------------------------------------------------------------- |
+| 觀測 | CloudWatch Agent、CloudWatch Logs、RDS 內建指標                   |
+| 偵測 | CloudWatch metric filter、CloudWatch Alarm、SNS                   |
+| 判讀 | CloudWatch investigations、CloudTrail                             |
+| 權限 | IAM role（`CloudWatchAgentServerPolicy`、`AIOpsAssistantPolicy`） |
+| IaC  | Terraform（新增 `awscc`、`time` provider）                        |
 
 ## 架構說明
 
