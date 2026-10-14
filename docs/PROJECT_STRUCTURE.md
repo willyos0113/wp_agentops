@@ -3,14 +3,12 @@
 ```
 wp_agentops/
 ├── README.md                          # 架構規劃與檢核點驗證步驟（P0-2、P1-2）
-├── LEARNING_ROADMAP.md                # 學習路線圖
 ├── .gitignore                         # Git 忽略配置
 │
 ├── docs/                              # 說明文件
 │   ├── QUICKSTART.md                  # 快速開始指南
 │   ├── SETUP.md                       # 部署指南
-│   ├── PROJECT_STRUCTURE.md           # 本檔案
-│   └── IMPLEMENTATION_SUMMARY.md      # P0-2 實作調整總結（歷史紀錄）
+│   └── PROJECT_STRUCTURE.md           # 本檔案
 │
 ├── infra/                             # Terraform 基礎設施代碼
 │   ├── provider.tf                    # Provider 和版本要求
@@ -29,7 +27,14 @@ wp_agentops/
 │
 ├── practice/                          # AWS 服務練習紀錄
 │   ├── README.md                      # 練習清單
-│   └── cloudwatch/                    # CloudWatch 練習文檔與截圖
+│   ├── LEARNING_ROADMAP.md            # 學習路線圖
+│   ├── cloudwatch/                    # CloudWatch 練習文檔
+│   └── screenshots/                   # 練習截圖，不進版控
+│
+├── slides/                            # 簡報素材
+│   ├── OUTLINE.md                     # 簡報大綱
+│   ├── screenshots/                   # 簡報截圖，不進版控
+│   └── secrets/                       # 個人資料，不進版控
 │
 └── verification/                      # 驗證結果（截圖、指令輸出），內容不進版控
 ```
@@ -171,9 +176,6 @@ EC2 初始化腳本，包含：
 - 故障排除指南
 - 清理資源方法
 
-#### `docs/IMPLEMENTATION_SUMMARY.md`
-P0-2 實作調整的總結報告（歷史紀錄，不含 P1-2）
-
 ### 應用層
 
 #### `app/README.md`
@@ -232,4 +234,3 @@ P0-2 實作調整的總結報告（歷史紀錄，不含 P1-2）
 - [架構規劃與驗證步驟](../README.md) - P0-2、P1-2 的設計與檢核點
 - [快速開始指南](QUICKSTART.md) - 最短的部署流程
 - [詳細部署指南](SETUP.md) - 完整的部署步驟
-- [實作調整總結](IMPLEMENTATION_SUMMARY.md) - P0-2 的歷史紀錄

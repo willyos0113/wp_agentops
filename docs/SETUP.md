@@ -213,5 +213,4 @@ tail -f /var/log/cloud-init-output.log
 - [架構規劃與驗證步驟](../README.md) - P0-2、P1-2 的設計與檢核點
 - [快速開始指南](QUICKSTART.md) - 5 分鐘快速部署
 - [項目結構說明](PROJECT_STRUCTURE.md) - Terraform 檔案詳解
-- [實作調整總結](IMPLEMENTATION_SUMMARY.md) - P0-2 的歷史紀錄
 - [應用層配置](../app/README.md) - WordPress 自定義指南

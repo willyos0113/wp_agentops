@@ -132,7 +132,6 @@ terraform plan -json | jq '.resource_changes[] | select(.change.actions[] | sele
 - [架構規劃與驗證步驟](../README.md) - P0-2、P1-2 的設計與檢核點
 - [詳細部署指南](SETUP.md) - 完整的部署步驟
 - [項目架構](PROJECT_STRUCTURE.md) - Terraform 檔案和專案組織說明
-- [實作調整](IMPLEMENTATION_SUMMARY.md) - P0-2 的歷史紀錄
 - [WordPress 應用層](../app/README.md) - 應用層配置說明
 
 ---
