@@ -66,7 +66,7 @@
 
 - [x] 能快速找到 Metrics 選單
 - [x] 能打開 Alarms 頁面
-- [x] 📸 **截圖：CloudWatch 控制台左側選單** (./screenshots/cloudwatch-prac-1.png)
+- [x] 📸 **截圖：CloudWatch 控制台左側選單** (../screenshots/cloudwatch-prac-1.png)
 
 ---
 
@@ -115,7 +115,7 @@
 - [x] 儀表板已建立
 - [x] 至少有 2 個小部件
 - [x] 小部件能顯示資料或 INSUFFICIENT_DATA 狀態
-- [x] 📸 **截圖：完整儀表板畫面（包含 2 個小部件）** (./screenshots/cloudwatch-prac-2.png)
+- [x] 📸 **截圖：完整儀表板畫面（包含 2 個小部件）** (../screenshots/cloudwatch-prac-2.png)
 
 ---
 
@@ -181,7 +181,7 @@
 - [x] 能看到警報狀態 (OK/ALARM/INSUFFICIENT_DATA)
 - [x] 警報的 **Actions 欄位顯示 SNS topic**，不是 "No actions"
 - [x] 能編輯警報閾值
-- [x] 📸 **截圖：警報列表（顯示 CPU-High-Alert 和 Actions）** (./screenshots/cloudwatch-prac-3.png)
+- [x] 📸 **截圖：警報列表（顯示 CPU-High-Alert 和 Actions）** (../screenshots/cloudwatch-prac-3.png)
 
 ---
 
@@ -259,8 +259,8 @@
 - [x] 日誌串流已建立
 - [x] 指標過濾已建立
 - [x] 能在 Metrics 中找到新指標
-- [x] 📸 **截圖：指標過濾設定（Filter name 和 Pattern）** (./screenshots/cloudwatch-prac-4-1.png)
-- [x] 📸 **截圖：Metrics 中出現新的 MyApp/ErrorCount 指標** (./screenshots/cloudwatch-prac-4-2.png)
+- [x] 📸 **截圖：指標過濾設定（Filter name 和 Pattern）** (../screenshots/cloudwatch-prac-4-1.png)
+- [x] 📸 **截圖：Metrics 中出現新的 MyApp/ErrorCount 指標** (../screenshots/cloudwatch-prac-4-2.png)
 
 ---
 
@@ -299,8 +299,8 @@
 
 - [x] 能執行查詢
 - [x] 理解查詢結果結構
-- [x] 📸 **截圖：第一個查詢的執行結果（統計日誌總數）** (./screenshots/cloudwatch-prac-5-1.png)
-- [x] 📸 **截圖：第二個查詢的執行結果（篩選 ERROR 日誌）** (./screenshots/cloudwatch-prac-5-2.png)
+- [x] 📸 **截圖：第一個查詢的執行結果（統計日誌總數）** (../screenshots/cloudwatch-prac-5-1.png)
+- [x] 📸 **截圖：第二個查詢的執行結果（篩選 ERROR 日誌）** (../screenshots/cloudwatch-prac-5-2.png)
 
 ---
 

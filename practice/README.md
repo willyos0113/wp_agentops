@@ -41,11 +41,11 @@ AWS 服務的自主學習與驗證記錄。
 practice/
 ├── README.md (此檔案)
 ├── cloudwatch/
-│   ├── CLOUDWATCH_PRACTICE.md
-│   └── screenshots/
+│   └── CLOUDWATCH_PRACTICE.md
 ├── ec2/
 ├── lambda/
-└── ...
+├── ...
+└── screenshots/   （各服務練習截圖，僅存本機，不納入版控）
 ```
 
-每個服務資料夾包含練習文檔、截圖和相關資源。
+每個服務資料夾包含練習文檔和相關資源，截圖統一放在 `practice/screenshots/`。
