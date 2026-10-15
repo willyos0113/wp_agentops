@@ -14,7 +14,7 @@
 # 依來源分組：
 # [ network.tf ] ──► (VPC ID、三個 subnet ID、web 與 db 的 security group ID)
 # [ compute.tf ] ──► (EC2 的 ID 與 IP、RDS 的位址與資料庫名稱、key pair 名稱、私鑰檔路徑)
-# [ monitoring.tf ] ──► (兩個 log group 名稱、alarm 名稱、SNS topic ARN)
+# [ monitoring.tf ] ──► (兩個 log group 名稱、alarm 名稱、SNS topic ARN、dashboard 網址)
 # [ agent.tf ] ──► (investigation group ARN)
 #
 # 組合成可直接複製使用的字串：
@@ -137,4 +137,9 @@ output "fault_inject_command" {
 output "fault_probe_command" {
   description = "Command to send a request and print the HTTP status code (timeout longer than WordPress DB wait)"
   value       = "curl -s -o /dev/null -w '%%{http_code}\\n' --max-time 300 http://${aws_instance.web.public_ip}/"
+}
+
+output "dashboard_url" {
+  description = "The URL of the CloudWatch dashboard"
+  value       = "https://${var.aws_region}.console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards:name=${aws_cloudwatch_dashboard.yiweee.dashboard_name}"
 }

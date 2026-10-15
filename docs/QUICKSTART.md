@@ -106,6 +106,7 @@ mysql -h <db_address> -u wp -p wordpress -e \
 ### 檢查日誌與告警
 - CloudWatch 的 log group `/yiweee/web/apache/access` 有一條以 instance ID 命名的 log stream。
 - Alarm `alarm-yiweee-http-5xx` 的狀態是 INSUFFICIENT_DATA（沒有 5xx 時的預期狀態）。
+- Dashboard `dashboard-yiweee-wordpress` 可開啟，網址為 `terraform output -raw dashboard_url`。
 
 ---
 

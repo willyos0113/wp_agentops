@@ -136,6 +136,7 @@ mysql -h <db_address> -u wp -p wordpress -e "SELECT post_title FROM wp_posts WHE
 | ---- | ----------------------------------------------------------------- |
 | 觀測 | CloudWatch Agent、CloudWatch Logs、RDS 內建指標                   |
 | 偵測 | CloudWatch metric filter、CloudWatch Alarm、SNS                   |
+| 視覺化 | CloudWatch Dashboard                                            |
 | 判讀 | CloudWatch investigations、CloudTrail                             |
 | 權限 | IAM role（`CloudWatchAgentServerPolicy`、`AIOpsAssistantPolicy`） |
 | IaC  | Terraform（新增 `awscc`、`time` provider）                        |
@@ -178,7 +179,14 @@ flowchart LR
 2. 網站沒有請求時不會產生日誌，指標也就沒有資料，Alarm 預設會把這種情況標成 INSUFFICIENT_DATA 而不是 OK，這是預期狀態，不是錯誤。也因為沒有請求就沒資料，驗證時需要自行發出請求來產生 5xx，否則不會觸發 Alarm。
 3. Alarm 觸發時同時做兩件事：啟動 CloudWatch investigations 調查、發到 SNS 寄信給維護人員。兩者平行進行，告警信寄送時調查通常尚未完成。
 4. 告警信只有告警本身的資訊（名稱、狀態變化、門檻），沒有日誌內容與分析。因此在告警描述中寫明「CloudWatch investigations 已自動開始調查」與調查頁面的位置，讓維護人員知道下一步去哪裡看。
-5. 只做 HTTP 5xx 這一條告警。CPU／記憶體／磁碟告警與 Dashboard 不在檢核點範圍內，先不做。
+5. 只做 HTTP 5xx 這一條告警。CPU／記憶體／磁碟告警不在檢核點範圍內，先不做。
+
+### 視覺化（Dashboard）
+
+1. 建立一個 CloudWatch Dashboard `dashboard-yiweee-wordpress`，把 5xx 次數趨勢、Alarm 目前狀態、EC2 的 CPU 與網路流量、access log 最近的 5xx 請求、error log 最新紀錄集中在同一個畫面，供人工查看。
+2. Dashboard 只用來看，不參與告警與調查：Alarm 觸發與 CloudWatch investigations 的判讀都不依賴它，不影響檢核點。
+3. 網址可用 `terraform output -raw dashboard_url` 取得。
+4. 沒有請求時 5xx 指標沒有資料，圖表呈現空白是預期狀態；演練時可在這個畫面同步看到 5xx 飆高與 Alarm 轉為 ALARM。
 
 ### 判讀（Agent 本體）
 
@@ -272,11 +280,11 @@ Invoke-Expression (terraform output -raw fault_inject_command)
 
 | 檔案                                            | 說明                                                                       |
 | ----------------------------------------------- | -------------------------------------------------------------------------- |
-| 📝 [`infra/monitoring.tf`](infra/monitoring.tf) | 觀測與偵測：Log group、metric filter、Alarm、SNS                           |
+| 📝 [`infra/monitoring.tf`](infra/monitoring.tf) | 觀測與偵測：Log group、metric filter、Alarm、SNS，以及視覺化的 Dashboard   |
 | 📝 [`infra/agent.tf`](infra/agent.tf)           | 維運 Agent：CloudWatch investigations 的 investigation group 與其 IAM role |
 | 🔧 `infra/compute.tf`、`infra/user_data.sh`     | Web server 的 IAM 權限、CloudWatch Agent 安裝與 `WP_DEBUG`                 |
 | 🔧 `infra/provider.tf`                          | 新增 `awscc`、`time` provider 與 `default_tags` 的 `Project` 標籤          |
-| 🔧 `infra/variables.tf`、`infra/outputs.tf`     | 新增 `alarm_email`、`log_retention_days`，以及故障注入與驗證用的指令輸出   |
+| 🔧 `infra/variables.tf`、`infra/outputs.tf`     | 新增 `alarm_email`、`log_retention_days`、`dashboard_url`，以及故障注入與驗證用的指令輸出 |
 
 # 相關文件
 

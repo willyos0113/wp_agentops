@@ -15,7 +15,7 @@ wp_agentops/
 │   ├── variables.tf                   # 變數定義
 │   ├── network.tf                     # VPC、Subnet、IGW、SG、Route Table
 │   ├── compute.tf                     # EC2、RDS、密鑰、IAM
-│   ├── monitoring.tf                  # P1-2：Log group、metric filter、Alarm、SNS
+│   ├── monitoring.tf                  # P1-2：Log group、metric filter、Alarm、SNS、Dashboard
 │   ├── agent.tf                       # P1-2：CloudWatch investigations 的 investigation group 與 IAM role
 │   ├── outputs.tf                     # 輸出變數
 │   ├── user_data.sh                   # EC2 初始化腳本
@@ -113,6 +113,12 @@ wp_agentops/
 - Alarm (alarm-yiweee-http-5xx): 1 分鐘內 ≥ 1 筆即觸發，同時啟動調查與發送 SNS
 - SNS topic (sns-yiweee-alarm) 與 email 訂閱 (var.alarm_email)
 
+**視覺化:**
+- Dashboard (dashboard-yiweee-wordpress): 只供人工查看，不參與告警與調查，包含 6 個 widget
+  - HTTP 5xx 次數趨勢、Alarm 狀態
+  - EC2 CPUUtilization、NetworkIn/Out
+  - access log 最近的 5xx 請求、error log 最新紀錄
+
 #### `agent.tf`
 - Investigation group (ig-yiweee)：使用 `awscc` provider 建立，允許本帳號的 Alarm 建立調查，並以 `Project` 標籤劃定調查範圍
 - 調查用 IAM Role (role-yiweee-investigation)：由 aiops.amazonaws.com 擔任，只掛唯讀的 AIOpsAssistantPolicy
@@ -137,7 +143,7 @@ wp_agentops/
 - 私鑰檔案路徑（sensitive）
 
 **監控與 Agent:**
-- 兩個 log group 名稱、Alarm 名稱、SNS topic ARN
+- 兩個 log group 名稱、Alarm 名稱、SNS topic ARN、Dashboard 網址 (dashboard_url)
 - investigation group ARN
 
 **故障演練:**

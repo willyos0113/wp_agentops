@@ -60,7 +60,7 @@ terraform plan
 - 2 個 Security Group (Web 和 DB)
 - 1 個 EC2 實例 (WordPress)，以及它的金鑰對、IAM Role、Instance Profile
 - 1 個 RDS 實例 (MySQL) 和 DB Subnet Group
-- 2 個 Log group、1 個 metric filter、1 個 Alarm、1 個 SNS topic 與 email 訂閱
+- 2 個 Log group、1 個 metric filter、1 個 Alarm、1 個 SNS topic 與 email 訂閱、1 個 CloudWatch Dashboard
 - 1 個 investigation group 和調查用的 IAM Role
 
 ## 步驟 3: 部署基礎設施
@@ -150,6 +150,7 @@ mysql -h <db_address> -u wp -p wordpress -e "SELECT post_title FROM wp_posts WHE
 
 1. CloudWatch 的 log group `/yiweee/web/apache/access` 有一條以 instance ID 命名的 log stream。日誌送達約需一分鐘。
 2. Alarm `alarm-yiweee-http-5xx` 的狀態是 INSUFFICIENT_DATA。沒有 5xx 時指標沒有資料，這是預期狀態。
+3. 用 `terraform output -raw dashboard_url` 取得網址並開啟，Dashboard `dashboard-yiweee-wordpress` 有 6 個 widget。沒有請求時 5xx 圖表空白是預期狀態。
 
 P1-2 的故障演練（偵測 → 判讀 → 處置）步驟見 [README](../README.md)。
 
