@@ -98,6 +98,14 @@ define('NONCE_SALT',       '.32M;hlz@3E97(NG-^h&)IRo|M^??:zD.?+v!1I>/yL?yw9W[_FN
 
 $table_prefix = 'wp_';
 
+// 網站網址固定為 HTTPS 網域；TLS 在 ALB 終止，EC2 收到的是 HTTP，
+// 因此要信任 ALB 帶來的 X-Forwarded-Proto，否則 WordPress 會判成 HTTP 而無限轉導
+define('WP_HOME', 'https://${domain_name}');
+define('WP_SITEURL', 'https://${domain_name}');
+if ( isset( $_SERVER['HTTP_X_FORWARDED_PROTO'] ) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https' ) {
+	$_SERVER['HTTPS'] = 'on';
+}
+
 // 開啟除錯但不顯示在頁面上：連不上 DB 等錯誤會寫進 Apache error log，供 CloudWatch investigations 判讀
 define('WP_DEBUG', true);
 define('WP_DEBUG_DISPLAY', false);

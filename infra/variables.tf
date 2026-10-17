@@ -14,6 +14,7 @@
 # 依用途分組：
 # [ 連線設定 ] ──► (provider.tf：連到哪個 region、用哪個 AWS CLI profile)
 # [ 網路設定 ] ──► (network.tf：VPC 與 subnet 的 CIDR、可 SSH 的維護人員 IP)
+# [ 網域與 HTTPS 設定 ] ──► (alb.tf：網域名稱、Cloudflare API token)
 # [ EC2 / RDS 設定 ] ──► (compute.tf：機型、儲存空間、兩組資料庫密碼)
 # [ 監控與告警設定 ] ──► (monitoring.tf：告警信箱、日誌保留天數)
 
@@ -38,6 +39,11 @@ variable "vpc_cidr" {
 
 variable "public_subnet_cidr" {
   description = "CIDR block for public subnet (1a)"
+  type        = string
+}
+
+variable "public_subnet_1c_cidr" {
+  description = "CIDR block for public subnet (1c, for the ALB)"
   type        = string
 }
 
@@ -86,6 +92,18 @@ variable "db_storage_size" {
   description = "Allocated storage for RDS (GB)"
   type        = number
   default     = 20
+}
+
+# === 網域與 HTTPS 設定值 ===
+variable "domain_name" {
+  description = "Domain name served by the ALB (the Cloudflare zone, e.g. example.com)"
+  type        = string
+}
+
+variable "cloudflare_api_token" {
+  description = "Cloudflare API token with Zone:Read and DNS:Edit on the domain"
+  type        = string
+  sensitive   = true
 }
 
 # === 監控與告警設定值 ===

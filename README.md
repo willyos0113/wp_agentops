@@ -13,6 +13,7 @@
 3. DB（RDS 或自架 MySQL）在 private，外網連不到（此條最能驗證真的懂分離）
 4. SG 串接：只允許 Web 的 SG 連 DB:3306
 5. 發一篇文章、重整後仍在（確認寫入 DB）
+6. 網站以 HTTPS 提供（ALB + ACM），HTTP 自動轉導 HTTPS，EC2 不能繞過 ALB 直接被連
 
 ## 技術棧
 
@@ -20,19 +21,40 @@
 | -------- | ---------------------------------------------------------- |
 | 雲端平台 | AWS（ap-northeast-1）                                      |
 | 網路     | VPC、Subnet、Internet Gateway、Route Table、Security Group |
+| 加密     | Application Load Balancer、ACM（DNS 驗證）、Cloudflare DNS |
 | 運算     | EC2 t3.micro（Ubuntu 22.04 LTS）                           |
 | 資料庫   | RDS for MySQL 8.0（db.t3.micro，20 GB）                    |
 | 應用     | WordPress、Apache、PHP、MySQL client 8.0                   |
 | 存取     | SSH、SSM Session Manager、IAM role                         |
-| IaC      | Terraform（`aws`、`tls`、`local` provider）、user_data     |
+| IaC      | Terraform（`aws`、`tls`、`local`、`cloudflare` provider）、user_data |
 
 ## 架構說明
 
 ### 網路設定
 
 1. 建立一個 VPC (vpc-yiweee)，CIDR 設定為 `10.0.0.0/16`。
-2. VPC 下切出 public 一個、private 兩個共計三個網段，名稱分別為 subnet-yiweee-public-1a(`10.0.1.0/24`)、subnet-yiweee-private-1a(`10.0.2.0/24`)、subnet-yiweee-private-1c(`10.0.3.0/24`)。
+2. VPC 下切出 public 兩個、private 兩個共計四個網段，名稱分別為 subnet-yiweee-public-1a(`10.0.1.0/24`)、subnet-yiweee-public-1c(`10.0.4.0/24`)、subnet-yiweee-private-1a(`10.0.2.0/24`)、subnet-yiweee-private-1c(`10.0.3.0/24`)。public-1c 只是為了滿足 ALB 必須橫跨兩個 AZ 的要求，不放 EC2。
 3. public 網段的 `0.0.0.0/0` 指向 IGW，並啟動內部機器自動配發對外 IP；private 網段只有 VPC 內的 local 路由，不對外。
+
+### HTTPS（ALB + ACM）
+
+```mermaid
+flowchart LR
+    U[使用者] -- "HTTPS 443" --> A["ALB<br/>ACM 憑證"]
+    U -. "HTTP 80 → 301" .-> A
+    A -- "HTTP 80（VPC 內）" --> E[ec2-yiweee]
+    E --> R[(rds-yiweee)]
+    CF["Cloudflare DNS<br/>網域 CNAME → ALB"] -. 解析 .-> U
+```
+
+1. 網域的 DNS 託管在 Cloudflare，網域名稱與 API token 寫在 `*.tfvars`（`domain_name`、`cloudflare_api_token`）。token 只需要該網域的 `Zone:Read` 與 `DNS:Edit`。
+2. 用 ACM 申請網域憑證，以 DNS 驗證：Terraform 在 Cloudflare 自動建立驗證用的 CNAME，等憑證簽發完成後 ALB 才掛上去，整個過程不需人工操作。
+3. ALB（alb-yiweee）放在 public-1a 與 public-1c。listener 443 掛 ACM 憑證並轉送到 target group（EC2 的 80）；listener 80 一律以 301 轉導 HTTPS。
+4. TLS 在 ALB 終止，ALB 到 EC2 之間在 VPC 內走 HTTP，此為已知取捨。
+5. 網域以 CNAME 指向 ALB，並設為「僅 DNS」（不經 Cloudflare 代理），讓使用者直連 ALB、看到的是 ACM 憑證。
+6. `wp-config.php` 將 `WP_HOME`、`WP_SITEURL` 固定為 `https://<網域>`，並信任 ALB 帶來的 `X-Forwarded-Proto`，否則 WordPress 會把請求判成 HTTP 而無限轉導。
+7. ALB 的 idle timeout 調為 120 秒：故障演練時 WordPress 約等 60 秒才回 500，預設 60 秒會讓 ALB 先回 504，該請求就不會進 Apache access log，5xx 告警也不會觸發。
+8. Apache 看到的來源 IP 是 ALB 的內網 IP，不是訪客 IP，此為已知取捨（需要時可再以 `X-Forwarded-For` 還原）。
 
 ### 運算資源
 
@@ -52,8 +74,9 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 ### Security group 設定
 
 1. DB server 的 inbound 只放行 3306，來源限制為 Web server 的 SG。
-2. Web server 的 inbound 放行 80，來源 `0.0.0.0/0`；22，來源 `[維護人員的 IP]`。
-3. DB server 和 Web server 的 outbound 先全開。
+2. ALB 的 inbound 放行 80 與 443，來源 `0.0.0.0/0`；outbound 只放行 80，目的限制為 Web server 的 SG。
+3. Web server 的 inbound 放行 80，來源限制為 ALB 的 SG（不再對 `0.0.0.0/0` 開放）；22，來源 `[維護人員的 IP]`。
+4. DB server 和 Web server 的 outbound 先全開。
 
 ## RDS(MySQL) 與 WordPress 串接設定
 
@@ -74,14 +97,15 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 ### 部署
 
-1. 確認 `terraform.tfvars` 的 `admin_cidr` 是目前的對外 IP（`curl -s https://checkip.amazonaws.com`），`alarm_email` 是收得到信的信箱。
-2. 執行 `terraform apply`，RDS 建立約需 5 到 10 分鐘。
+1. 確認 `terraform.tfvars` 的 `admin_cidr` 是目前的對外 IP（`curl -s https://checkip.amazonaws.com`），`alarm_email` 是收得到信的信箱，`domain_name` 與 `cloudflare_api_token` 已填入且網域在 Cloudflare 的 zone 狀態為 Active。
+2. 執行 `terraform apply`，RDS 建立約需 5 到 10 分鐘，ACM 憑證驗證通常再加數分鐘。
 3. 到信箱點擊 AWS Notifications 的確認連結（SNS 訂閱確認），否則收不到告警信。
 4. 等待 user_data 執行完成。以 `terraform output -raw ssh_command` 取得的指令登入 Web server，執行 `sudo tail /var/log/cloud-init-output.log`，最後一行出現 `CloudWatch Agent setup complete!` 才算完成。
+5. `terraform apply` 結束時 ALB 與憑證已就緒，但 EC2 的 `user_data.sh` 才剛開始跑，Apache 尚未啟動，此時用 `wordpress_url` 開網站會看到 ALB 回 `502 Bad Gateway`，這是暫時現象。等 target group `tg-yiweee-web` 的 target 由 `initial` / `unhealthy` 轉為 `healthy`（通常 5 到 10 分鐘）再驗證；超過 15 分鐘仍是 502 才需要檢查 cloud-init 日誌。
 
 ### 驗證
 
-1. **檢核點 1**：在 AWS web console 的 VPC 頁面截圖 `vpc-yiweee`、三個 subnet、兩張 route table。`rt-yiweee-public` 要有 `0.0.0.0/0` 指向 IGW，`rt-yiweee-private` 只有 `local`。
+1. **檢核點 1**：在 AWS web console 的 VPC 頁面截圖 `vpc-yiweee`、四個 subnet、兩張 route table。`rt-yiweee-public` 要有 `0.0.0.0/0` 指向 IGW，`rt-yiweee-private` 只有 `local`。
 2. **檢核點 2**：執行下列指令，第一次預期回 302 導向安裝頁。用瀏覽器完成 WordPress 安裝後再執行一次，預期回 200。
 
 ```
@@ -103,15 +127,43 @@ nc -zv -w 5 $(terraform output -raw db_address) 3306
 mysql -h <db_address> -u wp -p wordpress -e "SELECT post_title FROM wp_posts WHERE post_status='publish';"
 ```
 
+6. **檢核點 6**：
+   - HTTPS 有效：執行下列指令，預期回 200（或 WordPress 尚未安裝時回 302），且不需 `-k` 忽略憑證錯誤；用瀏覽器開啟網址，網址列顯示鎖頭，檢視憑證的簽發者為 Amazon。
+
+```
+curl -I $(terraform output -raw wordpress_url)
+```
+
+   - HTTP 轉導：執行下列指令，預期回 `301` 且 `Location` 為 `https://` 開頭。
+
+```
+eval "$(terraform output -raw http_redirect_command)"
+```
+
+   - 不能繞過 ALB：執行下列指令，預期逾時（Web server 的 80 只放行 ALB 的 SG）。
+
+macOS / Linux（Windows 的 Git Bash 亦同）：
+
+```
+curl -m 5 http://$(terraform output -raw web_ec2_public_ip)
+```
+
+Windows（PowerShell）：
+
+```
+curl.exe -m 5 http://$(terraform output -raw web_ec2_public_ip)
+```
+
 ## 異動檔案
 
 | 檔案                                          | 說明                                                          |
 | --------------------------------------------- | ------------------------------------------------------------- |
-| 📝 [`infra/network.tf`](infra/network.tf)     | VPC、三個 subnet、IGW、route table，以及 Web / DB 的 SG 規則  |
+| 📝 [`infra/network.tf`](infra/network.tf)     | VPC、四個 subnet、IGW、route table，以及 ALB / Web / DB 的 SG 規則 |
+| 📝 [`infra/alb.tf`](infra/alb.tf)             | ACM 憑證與 DNS 驗證、ALB、target group、80 轉導與 443 listener、Cloudflare DNS 記錄 |
 | 📝 [`infra/compute.tf`](infra/compute.tf)     | Web server EC2、私鑰、IAM role（SSM）、DB subnet group 與 RDS |
-| 📝 [`infra/user_data.sh`](infra/user_data.sh) | 安裝 WordPress、建立 `wp` 帳號、寫入 `wp-config.php`          |
-| 📝 `infra/provider.tf`、`infra/variables.tf`  | provider 設定與網段、機型、密碼等參數                         |
-| 📝 [`infra/outputs.tf`](infra/outputs.tf)     | `wordpress_url`、`db_address`、`ssh_command` 等驗證用輸出     |
+| 📝 [`infra/user_data.sh`](infra/user_data.sh) | 安裝 WordPress、建立 `wp` 帳號、寫入 `wp-config.php`（含 HTTPS 網址設定） |
+| 📝 `infra/provider.tf`、`infra/variables.tf`  | provider 設定（含 `cloudflare`）與網段、機型、密碼、網域等參數 |
+| 📝 [`infra/outputs.tf`](infra/outputs.tf)     | `wordpress_url`（HTTPS 網域）、`db_address`、`ssh_command`、`http_redirect_command` 等驗證用輸出 |
 
 # P1-2 | WordPress + 維運 Agent
 
@@ -177,6 +229,7 @@ flowchart LR
 
 1. 設定 metric filter 將 Apache 的 access log 中的 HTTP 5xx 轉成指標，超過門檻即觸發 Alarm。在本階段的故障情境下（見「故障情境設計」），每個請求都須等到逾時才產生一筆 500，所以門檻要低到零星幾筆就觸發。
 2. 網站沒有請求時不會產生日誌，指標也就沒有資料，Alarm 預設會把這種情況標成 INSUFFICIENT_DATA 而不是 OK，這是預期狀態，不是錯誤。也因為沒有請求就沒資料，驗證時需要自行發出請求來產生 5xx，否則不會觸發 Alarm。
+   - ALB 的健康檢查每 30 秒會對 `/` 發一次請求並進到 access log，故障期間這些請求也可能產生 5xx，所以 Alarm 有機會在你發出請求之前就被觸發；沒有故障時它們回 2xx／3xx，不影響 5xx 指標。
 3. Alarm 觸發時同時做兩件事：啟動 CloudWatch investigations 調查、發到 SNS 寄信給維護人員。兩者平行進行，告警信寄送時調查通常尚未完成。
 4. 告警信只有告警本身的資訊（名稱、狀態變化、門檻），沒有日誌內容與分析。因此在告警描述中寫明「CloudWatch investigations 已自動開始調查」與調查頁面的位置，讓維護人員知道下一步去哪裡看。
 5. 只做 HTTP 5xx 這一條告警。CPU／記憶體／磁碟告警不在檢核點範圍內，先不做。

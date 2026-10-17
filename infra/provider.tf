@@ -11,8 +11,10 @@
 # [ tls ] ──► (負責 tls_private_key：compute.tf 產生 SSH 金鑰)
 # [ local ] ──► (負責 local_file：compute.tf 把私鑰寫成本機檔案)
 # [ time ] ──► (負責 time_sleep：agent.tf 等待 IAM Role 生效)
+# [ cloudflare ] ──► (負責 cloudflare_record：alb.tf 建立 ACM 驗證與網站的 DNS 記錄)
 #
 # [ provider "aws" / provider "awscc" ] ──► (設定 region 與 profile，決定連到哪個帳號的哪個區域)
+# [ provider "cloudflare" ] ──► (以 API token 連到 Cloudflare，token 來自 tfvars)
 # [ provider "aws" 的 default_tags ] ──► (替所有 aws_* 資源加上 Project 標籤)
 # tls、local 與 time 只在本機運作，不需要 provider 區塊
 
@@ -40,6 +42,10 @@ terraform {
       source  = "hashicorp/time"
       version = "~> 0.9"
     }
+    cloudflare = { # 網域的 DNS 在 Cloudflare，用來建立 ACM 的 DNS 驗證記錄與指向 ALB 的記錄
+      source  = "cloudflare/cloudflare"
+      version = "~> 4.0"
+    }
   }
 }
 
@@ -57,4 +63,8 @@ provider "aws" {
 provider "awscc" {
   region  = var.aws_region
   profile = var.profile
+}
+
+provider "cloudflare" {
+  api_token = var.cloudflare_api_token
 }

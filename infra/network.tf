@@ -9,9 +9,12 @@
 # [ aws_internet_gateway ] (VPC 對外的出入口)
 #        │
 #        ▼ (aws_route_table.public：0.0.0.0/0 指向 IGW)
-# [ aws_subnet.public_1a ] (放 EC2)
+# [ aws_subnet.public_1a / public_1c ] (放 ALB；EC2 只在 1a)
 #        │
-#        ▼ (aws_security_group.web：放行 HTTP 80、管理者 IP 的 SSH 22)
+#        ▼ (aws_security_group.alb：放行 HTTP 80 與 HTTPS 443)
+# [ ALB ] (定義在 alb.tf)
+#        │
+#        ▼ (aws_security_group.web：只放行來自 ALB SG 的 HTTP 80、管理者 IP 的 SSH 22)
 # [ EC2 ] (定義在 compute.tf)
 #        │
 #        ▼ (aws_security_group.db：只放行來自 web SG 的 MySQL 3306)
@@ -48,6 +51,17 @@ resource "aws_subnet" "public_1a" { # 建立一個 Public Subnet(1a)，並綁定
 
   tags = {
     Name = "subnet-yiweee-public-1a"
+  }
+}
+
+resource "aws_subnet" "public_1c" { # 建立第二個 Public Subnet(1c)，ALB 必須橫跨兩個 AZ；EC2 不放這裡
+  vpc_id                  = aws_vpc.yiweee.id
+  cidr_block              = var.public_subnet_1c_cidr
+  availability_zone       = "${var.aws_region}c"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "subnet-yiweee-public-1c"
   }
 }
 
@@ -90,6 +104,11 @@ resource "aws_route_table_association" "public_1a" { # 將 Public Subnet(1a) 綁
   route_table_id = aws_route_table.public.id
 }
 
+resource "aws_route_table_association" "public_1c" { # 將 Public Subnet(1c) 綁定到 Route Table
+  subnet_id      = aws_subnet.public_1c.id
+  route_table_id = aws_route_table.public.id
+}
+
 resource "aws_route_table" "private" { # 建立一個 Route Table，並綁定到 VPC
   vpc_id = aws_vpc.yiweee.id
 
@@ -124,13 +143,50 @@ resource "aws_security_group" "web" { # EC2(web server) 的 Security Group
   }
 }
 
-resource "aws_security_group_rule" "web_http" { # EC2(web server) 的 Security Group 規則，允許 HTTP 流量
+resource "aws_security_group" "alb" { # ALB 的 Security Group
+  name        = "yiweee-sg-alb"
+  description = "Security group for the public ALB"
+  vpc_id      = aws_vpc.yiweee.id
+
+  tags = {
+    Name = "sg-yiweee-alb"
+  }
+}
+
+resource "aws_security_group_rule" "alb_http" { # ALB 的 Security Group 規則，允許 HTTP 進來（listener 會轉導 HTTPS）
   type              = "ingress"
   from_port         = 80
   to_port           = 80
   protocol          = "tcp"
   cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.web.id
+  security_group_id = aws_security_group.alb.id
+}
+
+resource "aws_security_group_rule" "alb_https" { # ALB 的 Security Group 規則，允許 HTTPS 流量
+  type              = "ingress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_security_group.alb.id
+}
+
+resource "aws_security_group_rule" "alb_egress" { # ALB 的 Security Group 規則，只允許送往 EC2(web server) 的 HTTP
+  type                     = "egress"
+  from_port                = 80
+  to_port                  = 80
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.web.id
+  security_group_id        = aws_security_group.alb.id
+}
+
+resource "aws_security_group_rule" "web_http" { # EC2(web server) 的 Security Group 規則，只允許來自 ALB 的 HTTP 流量
+  type                     = "ingress"
+  from_port                = 80
+  to_port                  = 80
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.alb.id
+  security_group_id        = aws_security_group.web.id
 }
 
 resource "aws_security_group_rule" "web_ssh" { # EC2(web server) 的 Security Group 規則，允許 SSH 流量

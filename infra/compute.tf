@@ -80,6 +80,7 @@ resource "aws_instance" "web" { # 建立 WordPress EC2 instance
     db_password        = var.db_wp_password
     db_master_password = var.db_master_password
     db_host            = aws_db_instance.yiweee.address
+    domain_name        = var.domain_name
     access_log_group   = aws_cloudwatch_log_group.apache_access.name
     error_log_group    = aws_cloudwatch_log_group.apache_error.name
   }))                                                      # 傳送給 aws 腳本，記得用 base64 編碼，確保特殊字元在 protocol 解析文本時不會被破壞

@@ -12,7 +12,8 @@
 # [ 使用者 ]
 #
 # 依來源分組：
-# [ network.tf ] ──► (VPC ID、三個 subnet ID、web 與 db 的 security group ID)
+# [ network.tf ] ──► (VPC ID、四個 subnet ID、web 與 db 的 security group ID)
+# [ alb.tf ] ──► (ALB 的 DNS 名稱、ACM 憑證 ARN)
 # [ compute.tf ] ──► (EC2 的 ID 與 IP、RDS 的位址與資料庫名稱、key pair 名稱、私鑰檔路徑)
 # [ monitoring.tf ] ──► (兩個 log group 名稱、alarm 名稱、SNS topic ARN、dashboard 網址)
 # [ agent.tf ] ──► (investigation group ARN)
@@ -95,8 +96,23 @@ output "private_key_file" {
 }
 
 output "wordpress_url" {
-  description = "URL to access WordPress"
-  value       = "http://${aws_instance.web.public_ip}"
+  description = "URL to access WordPress (HTTPS via ALB)"
+  value       = "https://${var.domain_name}"
+}
+
+output "alb_dns_name" {
+  description = "The DNS name of the ALB"
+  value       = aws_lb.yiweee.dns_name
+}
+
+output "acm_certificate_arn" {
+  description = "The ARN of the validated ACM certificate"
+  value       = aws_acm_certificate_validation.yiweee.certificate_arn
+}
+
+output "http_redirect_command" {
+  description = "Command to verify that HTTP is redirected to HTTPS (expects 301)"
+  value       = "curl -sI http://${var.domain_name}/"
 }
 
 output "ssh_command" {
@@ -136,7 +152,7 @@ output "fault_inject_command" {
 
 output "fault_probe_command" {
   description = "Command to send a request and print the HTTP status code (timeout longer than WordPress DB wait)"
-  value       = "curl -s -o /dev/null -w '%%{http_code}\\n' --max-time 300 http://${aws_instance.web.public_ip}/"
+  value       = "curl -s -o /dev/null -w '%%{http_code}\\n' --max-time 300 https://${var.domain_name}/"
 }
 
 output "dashboard_url" {
