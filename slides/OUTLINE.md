@@ -105,16 +105,16 @@
 
 ## [p8] 實作 - 架構
 
-(本頁版面: 上半部放整體架構，下半部放監控流程，各配一個小標「整體架構」「監控流程」，不寫說明句子。兩張圖要連在一起: 從 Fig10 的 EC2 往下拉一條線接到 Fig11 的 Apache log，表示 log 來自這台 EC2)
+(本頁版面: 上半部放整體架構，下半部放監控流程，各配一個小標「整體架構」「監控流程」，不寫說明句子。兩張圖要連在一起: 從 Fig10 EC2 內的 CloudWatch Agent 往下拉一條線，穿出 VPC 接到 Fig11 的 Logs，線旁標「推送 log」，下方再用較淡的小字標「經 IAM role 授權」(說明這條線靠 EC2 的 IAM role 取得寫入權限，不是靠 VPC 網路關係)。要區分「裝在 EC2 上」與「AWS 託管服務」: Apache log、CloudWatch Agent 畫在 EC2 方框內，屬於 VPC；Logs 之後的元件畫在 CloudWatch 外框內，屬於 VPC 外的 AWS 服務)
 
 - 整體架構:
-  (Fig10. 架構圖1張: VPC、public/private subnet、EC2、RDS。EC2 到 RDS 的箭頭上方標「SG: 3306」，兩個 subnet 之間要留空間，標籤不要壓在框線上)
+  (Fig10. 架構圖1張: VPC、public/private subnet、EC2、RDS。EC2 方框內由上到下放兩個小方框「Apache log」「CloudWatch Agent」，中間一個向下小箭頭(Apache log → CloudWatch Agent)，這兩者是裝在 EC2 上的軟體。EC2 到 RDS 的箭頭上方標「SG: 3306」，兩個 subnet 之間要留空間，標籤不要壓在框線上)
   (screenshot3: RDS 連線設定畫面的 "Internet access gateway: Disabled"，放在架構圖右側，並用綠框圈出這一行)
   (口頭補充，不放上投影片: VPC、public/private subnets、EC2、RDS，及監控流程)
 
 - 監控流程:
-  (Fig11. 監控流程圖: Apache log → CloudWatch Agent → Logs → Metric Filter (5xx) → Alarm → 平行觸發 SNS 告警信與 investigations)
-  (口頭補充，不放上投影片: Web 日誌經 CloudWatch 轉成 5xx 指標，Alarm 觸發後平行送出告警信與啟動自動調查)
+  (Fig11. 監控流程圖: 由 Fig10 EC2 內的 CloudWatch Agent 往下拉線(標「推送 log」與「經 IAM role 授權」)接到 Logs。外面包一個標示「Amazon CloudWatch（AWS 託管服務）」的框，框內由左到右為 Logs → Metric Filter (5xx) → Alarm → investigations。SNS 告警信是獨立的 AWS 服務，畫在 CloudWatch 框外，由 Alarm 拉線出框連過去。Alarm 同時連到 investigations 與 SNS 告警信，表示平行觸發)
+  (口頭補充，不放上投影片: Apache log 與 CloudWatch Agent 裝在 EC2 上，Agent 把 Web 日誌推送到 CloudWatch；CloudWatch 轉成 5xx 指標，Alarm 觸發後平行送出 SNS 告警信與啟動 investigations 自動調查)
 
 ## [p9] 實作 - 故障演練(1/2): 故障與偵測
 
