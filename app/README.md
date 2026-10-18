@@ -79,12 +79,8 @@ terraform output -raw wordpress_url
 curl -I $(terraform output -raw wordpress_url)
 ```
 
-### 方式 B: 使用 SSH 連接進行維護
+### 方式 B: 使用 SSM Session Manager 進行維護
 ```bash
-# 傳統 SSH 方式
-ssh -i infra/yiweee.pem ubuntu@<ec2_public_ip>
-
-# 或使用 SSM Session Manager（推薦）
 aws ssm start-session --target <instance-id> --region ap-northeast-1 --profile course
 ```
 

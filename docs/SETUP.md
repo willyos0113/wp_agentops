@@ -8,36 +8,29 @@
 
 1. **AWS 帳戶** - 已配置 AWS CLI 且具有適當的 IAM 權限
 2. **Terraform** - 版本 >= 1.0
-3. **公網 IP** - 用於 SSH 維護存取（自己的外部 IP）
-4. **AWS CLI** - 版本 >= 2.0（僅 SSH 無法使用、改走 SSM 時需要，另需 Session Manager plugin）
+3. **AWS CLI** - 版本 >= 2.0，另需 Session Manager plugin（登入 EC2 用）
 
 ## 步驟 1: 準備環境
 
-### 1.1 獲取你的公網 IP
-
-```bash
-curl -s https://checkip.amazonaws.com
-# 結果例如: 203.0.113.10
-```
-
-### 1.2 複製 terraform.tfvars
+### 1.1 複製 terraform.tfvars
 
 ```bash
 cd infra/
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-### 1.3 編輯 terraform.tfvars
+### 1.2 編輯 terraform.tfvars
 
 編輯 `infra/terraform.tfvars`，設置以下值：
 
 ```hcl
-admin_cidr = "203.0.113.10/32"  # 改為你的公網 IP/32
-
 db_master_password = "強密碼!Master123"      # 改為強密碼
 db_wp_password     = "強密碼!Wordpress456"   # 改為強密碼
 
 alarm_email = "you@example.com"              # 改為收得到信的信箱
+
+domain_name          = "example.com"         # 改為你的網域，DNS 需託管在 Cloudflare 且 zone 狀態為 Active
+cloudflare_api_token = "your-api-token"      # 需有該網域的 Zone:Read 與 DNS:Edit 權限，不可進版控
 ```
 
 VPC 與 Subnet 的 CIDR 也是必填，範本已填好，不需更動。
@@ -55,11 +48,12 @@ terraform plan
 檢查計劃輸出，確認資源配置符合預期：
 
 - 1 個 VPC
-- 3 個 Subnet (1 public, 2 private)
+- 4 個 Subnet (2 public, 2 private；public-1c 只為了滿足 ALB 橫跨兩個 AZ)
 - 1 個 IGW 和 2 個 Route Table
-- 2 個 Security Group (Web 和 DB)
-- 1 個 EC2 實例 (WordPress)，以及它的金鑰對、IAM Role、Instance Profile
+- 3 個 Security Group (ALB、Web 和 DB)
+- 1 個 EC2 實例 (WordPress)，以及它的 IAM Role、Instance Profile
 - 1 個 RDS 實例 (MySQL) 和 DB Subnet Group
+- 1 個 ALB、target group 與 HTTP/HTTPS listener，1 張 ACM 憑證，以及 Cloudflare 的 DNS 驗證與網站記錄
 - 2 個 Log group、1 個 metric filter、1 個 Alarm、1 個 SNS topic 與 email 訂閱、1 個 CloudWatch Dashboard
 - 1 個 investigation group 和調查用的 IAM Role
 
@@ -73,7 +67,7 @@ terraform apply
 
 - EC2 公網 IP
 - RDS endpoint 與 address
-- SSH 命令
+- SSM 命令
 - 故障注入與驗證用的指令
 
 之後可用 `terraform output` 再查。下文的 `<db_address>` 指 `terraform output -raw db_address` 的值（不含 port；`db_endpoint` 含 `:3306`，不能直接給 `mysql -h` 使用）。
@@ -111,16 +105,10 @@ nc -zv -w 5 $(terraform output -raw db_address) 3306
 
 ### 登入 Web server
 
-以 SSH 登入（主要方式）：
+EC2 不開放 SSH（無 key pair、Security Group 無 22），只能以 SSM Session Manager 登入（需 AWS CLI >= 2.0 與 Session Manager plugin）：
 
 ```bash
-$(terraform output -raw ssh_command)
-```
-
-EC2 也掛了 `AmazonSSMManagedInstanceCore`，SSH 無法使用時（例如對外 IP 變動、`admin_cidr` 尚未更新）可改用 SSM Session Manager（需 AWS CLI >= 2.0 與 Session Manager plugin）：
-
-```bash
-aws ssm start-session --target $(terraform output -raw web_ec2_id) --region ap-northeast-1 --profile course
+$(terraform output -raw ssm_command)
 ```
 
 以下驗證 3、5 的指令都在登入後的 Web server 上執行。
@@ -135,7 +123,7 @@ mysql -h <db_address> -u wp -p
 
 ### 驗證 4: 完成 WordPress 安裝
 
-1. 開啟瀏覽器，訪問 `http://<web_ec2_public_ip>`
+1. 開啟瀏覽器，訪問 `terraform output -raw wordpress_url` 的網址
 2. 完成 WordPress 初始設置
 3. 發佈一篇測試文章
 
@@ -180,7 +168,7 @@ terraform destroy
 
 ### 問題: WordPress 無法連接資料庫
 
-1. SSH 進入 EC2 檢查 logs: `tail -f /var/log/apache2/error.log`
+1. 以 SSM 登入 EC2 檢查 logs: `tail -f /var/log/apache2/error.log`
 2. 驗證 MySQL 用戶是否建立: `mysql -h <db_address> -u master -p`
 3. 檢查 `wp-config.php` 中的數據庫密碼是否正確
 
@@ -189,7 +177,7 @@ terraform destroy
 檢查 EC2 用戶數據日誌：
 
 ```bash
-ssh -i infra/yiweee.pem ubuntu@<web_ec2_public_ip>
+$(terraform output -raw ssm_command)
 tail -f /var/log/cloud-init-output.log
 ```
 
@@ -205,7 +193,6 @@ tail -f /var/log/cloud-init-output.log
 
 ## 額外說明
 
-- **密鑰檔案**: 私鑰檔案 `yiweee.pem` 自動生成於 `infra/` 目錄，已在 `.gitignore` 中排除
 - **Terraform 狀態**: `*.tfstate` 檔案存儲基礎設施狀態，也已排除於 git 之外
 - **架構檔案**: `user_data.sh` 包含 WordPress、MySQL 用戶與 CloudWatch Agent 的配置腳本
 

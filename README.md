@@ -25,8 +25,8 @@
 | 運算     | EC2 t3.micro（Ubuntu 22.04 LTS）                           |
 | 資料庫   | RDS for MySQL 8.0（db.t3.micro，20 GB）                    |
 | 應用     | WordPress、Apache、PHP、MySQL client 8.0                   |
-| 存取     | SSH、SSM Session Manager、IAM role                         |
-| IaC      | Terraform（`aws`、`tls`、`local`、`cloudflare` provider）、user_data |
+| 存取     | SSM Session Manager、IAM role                              |
+| IaC      | Terraform（`aws`、`cloudflare` provider）、user_data       |
 
 ## 架構說明
 
@@ -60,7 +60,7 @@ flowchart LR
 
 1. 在 public 網段下，放一台 EC2 作為 Web server(機器名 ec2-yiweee，部署 WordPress)。
 2. 在 private 網段下，放一台 RDS 作為 DB server(機器名 rds-yiweee，選擇 MySQL)，採用 RDS 簡化 MySQL 部署設定等繁瑣步驟。
-3. Web server 的 EC2 以本機私鑰 SSH 登入，另掛 `AmazonSSMManagedInstanceCore` 讓 SSM Session Manager 也能連入；在 Web server 上跑 MySQL client 維護。
+3. Web server 的 EC2 掛 `AmazonSSMManagedInstanceCore`，只以 SSM Session Manager 登入（不開 SSH）；在 Web server 上跑 MySQL client 維護。
 4. RDS 需要補以下設定：
 
 ```
@@ -75,7 +75,7 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 1. DB server 的 inbound 只放行 3306，來源限制為 Web server 的 SG。
 2. ALB 的 inbound 放行 80 與 443，來源 `0.0.0.0/0`；outbound 只放行 80，目的限制為 Web server 的 SG。
-3. Web server 的 inbound 放行 80，來源限制為 ALB 的 SG（不再對 `0.0.0.0/0` 開放）；22，來源 `[維護人員的 IP]`。
+3. Web server 的 inbound 放行 80，來源限制為 ALB 的 SG（不再對 `0.0.0.0/0` 開放）；不開放 22（無 SSH）。
 4. DB server 和 Web server 的 outbound 先全開。
 
 ## RDS(MySQL) 與 WordPress 串接設定
@@ -86,10 +86,10 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 ## Credential 管理
 
-1. Web server 一台 EC2 的私鑰，產生後存放到 infra 的根目錄。
+1. Web server 不使用 SSH 金鑰（不建立 key pair，也沒有私鑰檔），只以 IAM role 透過 SSM Session Manager 登入。
 2. 所有密碼（`master`、`wp` 帳號）的來源寫在 `*.tfvars`，由 user_data 自動寫入 Web server 的 `wp-config.php`。因此密碼會以明文留存在 `wp-config.php`、tfstate 與 user_data，為求整體自動化順暢，此為已知取捨。
 3. WordPress 的 Salt Key 以固定值寫在 `user_data.sh`，每次部署相同，且隨程式碼納入版控，此為已知取捨。
-4. 要有 `.gitignore` 避免 infra 的機密資訊如 `*.pem`、`*.tfstate*`、`.terraform/`、`*.tfvars` 被公開。
+4. 要有 `.gitignore` 避免 infra 的機密資訊如 `*.tfstate*`、`.terraform/`、`*.tfvars` 被公開。
 
 ## 檢核點驗證步驟
 
@@ -97,10 +97,10 @@ availability_zone   = "ap-northeast-1a" # 確保 RDS 挑到 1a 的 AZ
 
 ### 部署
 
-1. 確認 `terraform.tfvars` 的 `admin_cidr` 是目前的對外 IP（`curl -s https://checkip.amazonaws.com`），`alarm_email` 是收得到信的信箱，`domain_name` 與 `cloudflare_api_token` 已填入且網域在 Cloudflare 的 zone 狀態為 Active。
+1. 確認 `terraform.tfvars` 的 `alarm_email` 是收得到信的信箱，`domain_name` 與 `cloudflare_api_token` 已填入且網域在 Cloudflare 的 zone 狀態為 Active。
 2. 執行 `terraform apply`，RDS 建立約需 5 到 10 分鐘，ACM 憑證驗證通常再加數分鐘。
 3. 到信箱點擊 AWS Notifications 的確認連結（SNS 訂閱確認），否則收不到告警信。
-4. 等待 user_data 執行完成。以 `terraform output -raw ssh_command` 取得的指令登入 Web server，執行 `sudo tail /var/log/cloud-init-output.log`，最後一行出現 `CloudWatch Agent setup complete!` 才算完成。
+4. 等待 user_data 執行完成。以 `terraform output -raw ssm_command` 取得的指令登入 Web server，執行 `sudo tail /var/log/cloud-init-output.log`，最後一行出現 `CloudWatch Agent setup complete!` 才算完成。
 5. `terraform apply` 結束時 ALB 與憑證已就緒，但 EC2 的 `user_data.sh` 才剛開始跑，Apache 尚未啟動，此時用 `wordpress_url` 開網站會看到 ALB 回 `502 Bad Gateway`，這是暫時現象。等 target group `tg-yiweee-web` 的 target 由 `initial` / `unhealthy` 轉為 `healthy`（通常 5 到 10 分鐘）再驗證；超過 15 分鐘仍是 502 才需要檢查 cloud-init 日誌。
 
 ### 驗證
@@ -119,8 +119,8 @@ nc -zv -w 5 $(terraform output -raw db_address) 3306
 ```
 
 4. **檢核點 4**：
-   - 正向：以 `terraform output -raw ssh_command` 取得的指令登入 Web server，執行 `nc -zv <db_address> 3306`，預期成功。
-   - 反向：在 AWS web console 於 `subnet-yiweee-public-1a` 臨時起一台 EC2，掛一個新建的 SG（只放行維護人員 IP 連 22），登入後執行同一行 `nc`，預期逾時。測試完後刪除這台 EC2 與臨時 SG。
+   - 正向：以 `terraform output -raw ssm_command` 取得的指令登入 Web server，執行 `nc -zv <db_address> 3306`，預期成功。
+   - 反向：在 AWS web console 於 `subnet-yiweee-public-1a` 臨時起一台 EC2，掛與 Web server 相同的 instance profile（`aws_iam_instance_profile.web`）與一個不放行任何 inbound 的新建 SG，以 SSM 登入後執行同一行 `nc`，預期逾時。測試完後刪除這台 EC2 與臨時 SG。
 5. **檢核點 5**：在 WordPress 後台發一篇文章，然後在 Web server 執行下列指令，看得到剛發的標題即通過。
 
 ```
@@ -134,13 +134,13 @@ mysql -h <db_address> -u wp -p wordpress -e "SELECT post_title FROM wp_posts WHE
 curl -I $(terraform output -raw wordpress_url)
 ```
 
-   - HTTP 轉導：執行下列指令，預期回 `301` 且 `Location` 為 `https://` 開頭。
+- HTTP 轉導：執行下列指令，預期回 `301` 且 `Location` 為 `https://` 開頭。
 
 ```
 eval "$(terraform output -raw http_redirect_command)"
 ```
 
-   - 不能繞過 ALB：執行下列指令，預期逾時（Web server 的 80 只放行 ALB 的 SG）。
+- 不能繞過 ALB：執行下列指令，預期逾時（Web server 的 80 只放行 ALB 的 SG）。
 
 macOS / Linux（Windows 的 Git Bash 亦同）：
 
@@ -156,14 +156,14 @@ curl.exe -m 5 http://$(terraform output -raw web_ec2_public_ip)
 
 ## 異動檔案
 
-| 檔案                                          | 說明                                                          |
-| --------------------------------------------- | ------------------------------------------------------------- |
-| 📝 [`infra/network.tf`](infra/network.tf)     | VPC、四個 subnet、IGW、route table，以及 ALB / Web / DB 的 SG 規則 |
-| 📝 [`infra/alb.tf`](infra/alb.tf)             | ACM 憑證與 DNS 驗證、ALB、target group、80 轉導與 443 listener、Cloudflare DNS 記錄 |
-| 📝 [`infra/compute.tf`](infra/compute.tf)     | Web server EC2、私鑰、IAM role（SSM）、DB subnet group 與 RDS |
-| 📝 [`infra/user_data.sh`](infra/user_data.sh) | 安裝 WordPress、建立 `wp` 帳號、寫入 `wp-config.php`（含 HTTPS 網址設定） |
-| 📝 `infra/provider.tf`、`infra/variables.tf`  | provider 設定（含 `cloudflare`）與網段、機型、密碼、網域等參數 |
-| 📝 [`infra/outputs.tf`](infra/outputs.tf)     | `wordpress_url`（HTTPS 網域）、`db_address`、`ssh_command`、`http_redirect_command` 等驗證用輸出 |
+| 檔案                                          | 說明                                                                                             |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| 📝 [`infra/network.tf`](infra/network.tf)     | VPC、四個 subnet、IGW、route table，以及 ALB / Web / DB 的 SG 規則                               |
+| 📝 [`infra/alb.tf`](infra/alb.tf)             | ACM 憑證與 DNS 驗證、ALB、target group、80 轉導與 443 listener、Cloudflare DNS 記錄              |
+| 📝 [`infra/compute.tf`](infra/compute.tf)     | Web server EC2、IAM role（SSM）、DB subnet group 與 RDS                                          |
+| 📝 [`infra/user_data.sh`](infra/user_data.sh) | 安裝 WordPress、建立 `wp` 帳號、寫入 `wp-config.php`（含 HTTPS 網址設定）                        |
+| 📝 `infra/provider.tf`、`infra/variables.tf`  | provider 設定（含 `cloudflare`）與網段、機型、密碼、網域等參數                                   |
+| 📝 [`infra/outputs.tf`](infra/outputs.tf)     | `wordpress_url`（HTTPS 網域）、`db_address`、`ssm_command`、`http_redirect_command` 等驗證用輸出 |
 
 # P1-2 | WordPress + 維運 Agent
 
@@ -341,9 +341,11 @@ Invoke-Expression (terraform output -raw fault_inject_command)
 
 # 簡報實作步驟
 
+---
+
 ## 目的
 
-將簡報 `OUTLINE.md` 中所需的截圖 `screenshotN.png`(N 從 1~11)，以aws服務操作步驟，安排一系列的操作步驟，目的在讓本專案使用者能快速重現 `OUTLINE.md` 的內容。
+將簡報 `OUTLINE.md` 中所需的截圖 `screenshotN.png`(N 從 1~11)，以 AWS 服務操作步驟，安排一系列的操作步驟，目的使本專案使用者能快速重現 `OUTLINE.md` 的內容。
 
 ## 步驟
 
@@ -370,8 +372,8 @@ Invoke-Expression (terraform output -raw fault_inject_command)
 
 | 步驟 | 操作                                                                                            | 截圖                                                                               |
 | ---- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| ①    | 執行 `eval "$(terraform output -raw fault_inject_command)"` 移除 DB SG 的 3306 規則，並記下時間 | **screenshot4**：終端機輸出，看得到被移除的規則（`FromPort` / `ToPort` 為 3306）   |
-| ②    | 執行 `eval "$(terraform output -raw fault_probe_command)"`，每次請求約等 60 秒，預期回 `500`    | **screenshot5**：終端機的 `curl` 狀態碼 `500`                                      |
+| ①    | 移除 DB SG 的 3306 規則，並記下時間<br>macOS：`eval "$(terraform output -raw fault_inject_command)"`<br>Windows（PowerShell）：`Invoke-Expression (terraform output -raw fault_inject_command)` | **screenshot4**：終端機輸出，看得到被移除的規則（`FromPort` / `ToPort` 為 3306）   |
+| ②    | 發出請求，每次約等 60 秒，預期回 `500`<br>macOS：`eval "$(terraform output -raw fault_probe_command)"`<br>Windows（PowerShell）：`curl.exe -s -o NUL -w '%{http_code}\n' --max-time 300 (terraform output -raw wordpress_url)` | **screenshot5**：終端機的 `curl` 狀態碼 `500`                                      |
 | ③    | 到 CloudWatch > Alarms 開啟 `alarm-yiweee-http-5xx`，等它轉為 `ALARM`                           | **screenshot6**：Alarm 狀態為 `ALARM`，含 5xx 指標飆高的圖，只截上半部有內容的區域 |
 | ④a   | 到信箱開啟 AWS Notifications 寄來的告警信，並記下收信時間                                       | **screenshot7**：5xx 告警信                                                        |
 | ④b   | 到 CloudWatch > investigations，開啟由 Alarm 自動建立的調查，等調查完成                         | **screenshot8**：調查結果中的根因假設（Hypotheses）段落                            |
@@ -386,10 +388,9 @@ p10 的偵測時間卡片（`12:17 移除規則 → 12:19 收到告警信`）以
 
 # 相關文件
 
-| 文件                                                             | 說明                           |
-| ---------------------------------------------------------------- | ------------------------------ |
-| 📖 [快速開始](docs/QUICKSTART.md)                                | 5 分鐘快速部署指南             |
-| 📚 [詳細部署指南](docs/SETUP.md)                                 | 完整的部署步驟、驗證與故障排除 |
-| 🏗️ [專案結構](docs/PROJECT_STRUCTURE.md)                         | Terraform 檔案和專案組織說明   |
-| 💻 [應用層配置](app/README.md)                                   | WordPress 應用層說明           |
-| 📖 [CloudWatch 練習](practice/cloudwatch/CLOUDWATCH_PRACTICE.md) | CloudWatch 操作練習紀錄        |
+| 文件                                     | 說明                           |
+| ---------------------------------------- | ------------------------------ |
+| 📖 [快速開始](docs/QUICKSTART.md)        | 5 分鐘快速部署指南             |
+| 📚 [詳細部署指南](docs/SETUP.md)         | 完整的部署步驟、驗證與故障排除 |
+| 🏗️ [專案結構](docs/PROJECT_STRUCTURE.md) | Terraform 檔案和專案組織說明   |
+| 💻 [應用層配置](app/README.md)           | WordPress 應用層說明           |

@@ -5,16 +5,13 @@
 ### 步驟 1：準備（1 分鐘）
 
 ```bash
-# 取得公網 IP
-curl -s https://checkip.amazonaws.com
-
 # 進入 infra 目錄
 cd infra/
 
 # 複製配置
 cp terraform.tfvars.example terraform.tfvars
 
-# 編輯配置（改成你的 IP、密碼和信箱）
+# 編輯配置（改成你的密碼和信箱）
 nano terraform.tfvars  # 或用你的編輯器
 ```
 
@@ -55,17 +52,18 @@ terraform output -raw wordpress_url
 ## 📋 terraform.tfvars 必要配置
 
 ```hcl
-# 1. 你的公網 IP（SSH 存取）
-admin_cidr = "1.2.3.4/32"  # 改為你的 IP
-
-# 2. RDS Master 密碼（8+ 字，大小寫+數字+特殊字)
+# RDS Master 密碼（8+ 字，大小寫+數字+特殊字)
 db_master_password = "MyMaster#2024"
 
-# 3. WordPress 密碼（8+ 字，大小寫+數字+特殊字)
+# WordPress 密碼（8+ 字，大小寫+數字+特殊字)
 db_wp_password = "MyWP#2024"
 
-# 4. 接收告警信的信箱
+# 接收告警信的信箱
 alarm_email = "you@example.com"
+
+# 網域（DNS 託管在 Cloudflare，zone 需為 Active）與 API token（需 Zone:Read、DNS:Edit）
+domain_name          = "example.com"
+cloudflare_api_token = "your-api-token"
 
 # 可選：改變區域、實例類型或日誌保留天數
 # aws_region = "ap-northeast-1"
@@ -95,8 +93,8 @@ nc -zv -w 5 $(terraform output -raw db_address) 3306
 
 ### 檢查資料持久化
 ```bash
-# 取得 SSH 指令並登入 EC2
-terraform output -raw ssh_command
+# 取得 SSM 指令並登入 EC2
+terraform output -raw ssm_command
 
 # 查詢 WordPress 資料（<db_address> 為 terraform output -raw db_address 的值）
 mysql -h <db_address> -u wp -p wordpress -e \
@@ -140,10 +138,9 @@ terraform plan -json | jq '.resource_changes[] | select(.change.actions[] | sele
 ## ⚠️ 重要提醒
 
 1. ✅ **備份 terraform.tfvars** — 包含敏感信息
-2. ✅ **檢查 .gitignore** — 確保 *.pem 和 *.tfvars 不被提交
-3. ✅ **保存 SSH 密鑰** — yiweee.pem 是 SSH 登入的唯一憑證（另可用 SSM Session Manager 連線）
-4. ✅ **注意 AWS 費用** — 部署後會產生費用，記得用完後執行 destroy
-5. ✅ **destroy 前先封存調查** — investigation group 內還有進行中的調查時無法刪除，殘留的 group 會讓下次 apply 失敗
+2. ✅ **檢查 .gitignore** — 確保 *.tfvars 不被提交
+3. ✅ **注意 AWS 費用** — 部署後會產生費用，記得用完後執行 destroy
+4. ✅ **destroy 前先封存調查** — investigation group 內還有進行中的調查時無法刪除，殘留的 group 會讓下次 apply 失敗
 
 ---
 
@@ -158,18 +155,16 @@ terraform plan -json | jq '.resource_changes[] | select(.change.actions[] | sele
 - [ ] 重整後文章仍存在
 - [ ] Apache 日誌已送進 CloudWatch Logs
 - [ ] 備份 terraform.tfvars
-- [ ] 備份 SSH 密鑰 (yiweee.pem)
 
 ---
 
-## 💡 SSM Session Manager（可選，推薦）
+## 💡 SSM Session Manager（唯一登入方式）
 
-無需 SSH 密鑰也能連接 EC2：
+EC2 不開放 SSH，以 SSM 連接：
 
 ```bash
 # 啟動會話
-aws ssm start-session --target $(terraform output -raw web_ec2_id) \
-  --region ap-northeast-1 --profile course
+$(terraform output -raw ssm_command)
 
 # 在會話中執行命令
 mysql -h <db_address> -u wp -p

@@ -14,7 +14,8 @@ wp_agentops/
 │   ├── provider.tf                    # Provider 和版本要求
 │   ├── variables.tf                   # 變數定義
 │   ├── network.tf                     # VPC、Subnet、IGW、SG、Route Table
-│   ├── compute.tf                     # EC2、RDS、密鑰、IAM
+│   ├── alb.tf                         # ACM 憑證、ALB、target group、listener、Cloudflare DNS 記錄
+│   ├── compute.tf                     # EC2、RDS、IAM
 │   ├── monitoring.tf                  # P1-2：Log group、metric filter、Alarm、SNS、Dashboard
 │   ├── agent.tf                       # P1-2：CloudWatch investigations 的 investigation group 與 IAM role
 │   ├── outputs.tf                     # 輸出變數
@@ -25,18 +26,12 @@ wp_agentops/
 ├── app/                               # WordPress 應用層
 │   └── README.md                      # 應用層配置說明
 │
-├── practice/                          # AWS 服務練習紀錄
-│   ├── README.md                      # 練習清單
-│   ├── LEARNING_ROADMAP.md            # 學習路線圖
-│   ├── cloudwatch/                    # CloudWatch 練習文檔
-│   └── screenshots/                   # 練習截圖，不進版控
-│
 ├── slides/                            # 簡報素材
 │   ├── OUTLINE.md                     # 簡報大綱
 │   ├── screenshots/                   # 簡報截圖，不進版控
 │   └── secrets/                       # 個人資料，不進版控
 │
-└── verification/                      # 驗證結果（截圖、指令輸出），內容不進版控
+└── verify/                            # 驗證結果（截圖、指令輸出），內容不進版控
 ```
 
 ## 檔案說明
@@ -46,7 +41,8 @@ wp_agentops/
 #### `provider.tf`
 - AWS provider 配置 (ap-northeast-1 區域)
 - AWS CLI profile: 動態配置（var.profile，預設："course"）
-- 定義所需的 Provider: aws 5.0+, tls 4.0+, local 2.0+, awscc 1.0+, time 0.9+
+- 定義所需的 Provider: aws 5.0+, awscc 1.0+, time 0.9+, cloudflare 4.0+
+  - cloudflare: 建立 ACM 的 DNS 驗證記錄與指向 ALB 的網站記錄，token 來自 var.cloudflare_api_token
   - awscc: `aws` provider 尚未支援 CloudWatch investigations，investigation group 改用 Cloud Control 版本建立
   - time: 用 `time_sleep` 等待調查用的 IAM Role 生效
 - default_tags: 所有 `aws_*` 資源都帶上 `Project = yiweee` 標籤，供 CloudWatch investigations 劃定調查範圍
@@ -55,17 +51,18 @@ wp_agentops/
 #### `variables.tf`
 - AWS 區域與 AWS CLI profile
 - VPC CIDR 和 Subnet CIDR
-- 管理員 IP (admin_cidr)
 - 實例類型和儲存容量
 - 資料庫密碼 (sensitive)
+- 網域 (domain_name) 與 Cloudflare API token (cloudflare_api_token，sensitive)
 - 告警信箱 (alarm_email) 與日誌保留天數 (log_retention_days)
 
-沒有預設值、必須在 `terraform.tfvars` 提供的變數：四個 CIDR、`admin_cidr`、`db_master_password`、`db_wp_password`、`alarm_email`。
+沒有預設值、必須在 `terraform.tfvars` 提供的變數：五個 CIDR、`db_master_password`、`db_wp_password`、`domain_name`、`cloudflare_api_token`、`alarm_email`。
 
 #### `network.tf`
 **VPC 與 Subnet:**
 - vpc-yiweee: 10.0.0.0/16
 - subnet-yiweee-public-1a: 10.0.1.0/24 (with auto-assign public IP)
+- subnet-yiweee-public-1c: 10.0.4.0/24 (只為了滿足 ALB 橫跨兩個 AZ，不放 EC2)
 - subnet-yiweee-private-1a: 10.0.2.0/24
 - subnet-yiweee-private-1c: 10.0.3.0/24
 
@@ -75,12 +72,19 @@ wp_agentops/
 - Private Route Table (只有 VPC local 路由)
 
 **Security Groups:**
-- sg-yiweee-web: HTTP (80), SSH (22 from admin_cidr)
+- sg-yiweee-alb: inbound 80、443 來自 0.0.0.0/0；outbound 只放行 80 到 web SG
+- sg-yiweee-web: HTTP (80 from ALB SG only)，不開 SSH
 - sg-yiweee-db: MySQL (3306 from web SG only)
+
+#### `alb.tf`
+- ACM 憑證 (var.domain_name)，以 DNS 驗證；Terraform 在 Cloudflare 自動建立驗證用 CNAME，等簽發完成後才掛到 listener
+- ALB (alb-yiweee)：放在 public-1a 與 public-1c，idle timeout 120 秒（故障演練時避免 ALB 先回 504）
+- Target group (tg-yiweee-web)：轉送到 EC2 的 80
+- Listener：443 掛 ACM 憑證並轉送；80 一律 301 轉導 HTTPS
+- Cloudflare 網站記錄：網域 CNAME 指向 ALB，僅 DNS（不經 Cloudflare 代理）
 
 #### `compute.tf`
 **EC2:**
-- 密鑰對: tls_private_key + aws_key_pair + local_file
 - AMI: Ubuntu 22.04 LTS (最新版本)
 - Instance Type: t3.micro (可配置)
 - User Data: 自動安裝 Apache、PHP、MySQL client、WordPress、CloudWatch Agent
@@ -131,16 +135,14 @@ wp_agentops/
 
 **EC2 資訊:**
 - 實例 ID、公網 IP、私網 IP
-- SSH 命令（便捷用）
-- WordPress URL
+- SSM 命令（便捷用，登入 EC2 的唯一方式）
+- WordPress URL（HTTPS 網域）、ALB DNS 名稱、ACM 憑證 ARN
+- http_redirect_command：驗證 HTTP 轉導 HTTPS（預期 301）
 
 **RDS 資訊:**
 - 資料庫 endpoint（含 port）和 address（不含 port，給 `mysql -h`、`nc` 使用）
 - 資料庫名稱
 
-**密鑰管理:**
-- 密鑰對名稱
-- 私鑰檔案路徑（sensitive）
 
 **監控與 Agent:**
 - 兩個 log group 名稱、Alarm 名稱、SNS topic ARN、Dashboard 網址 (dashboard_url)
@@ -154,10 +156,11 @@ wp_agentops/
 
 #### `terraform.tfvars.example`
 需要複製為 `terraform.tfvars` 並編輯以下值：
-- `admin_cidr`: 你的公網 IP (CIDR 格式)
 - `db_master_password`: RDS master 密碼
 - `db_wp_password`: WordPress DB 用戶密碼
 - `alarm_email`: 接收告警信的信箱（apply 後需點擊確認信）
+- `domain_name`: 網站網域（DNS 託管在 Cloudflare）
+- `cloudflare_api_token`: Cloudflare API token（需 Zone:Read、DNS:Edit）
 
 #### `user_data.sh`
 EC2 初始化腳本，包含：
@@ -203,6 +206,7 @@ EC2 初始化腳本，包含：
 3. 部署資源 (10-15 分鐘)
    └─ 執行 terraform apply
       ├─ 建立 VPC、Subnet、IGW、Security Groups
+      ├─ 申請 ACM 憑證、在 Cloudflare 建立驗證記錄、建立 ALB
       ├─ 建立 IAM Role、Log group、metric filter、SNS
       ├─ 建立 investigation group 與 Alarm
       ├─ 建立 RDS MySQL 實例
