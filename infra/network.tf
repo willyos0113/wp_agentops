@@ -14,7 +14,7 @@
 #        ▼ (aws_security_group.alb：放行 HTTP 80 與 HTTPS 443)
 # [ ALB ] (定義在 alb.tf)
 #        │
-#        ▼ (aws_security_group.web：只放行來自 ALB SG 的 HTTP 80、管理者 IP 的 SSH 22)
+#        ▼ (aws_security_group.web：只放行來自 ALB SG 的 HTTP 80)
 # [ EC2 ] (定義在 compute.tf)
 #        │
 #        ▼ (aws_security_group.db：只放行來自 web SG 的 MySQL 3306)
@@ -187,15 +187,6 @@ resource "aws_security_group_rule" "web_http" { # EC2(web server) 的 Security G
   protocol                 = "tcp"
   source_security_group_id = aws_security_group.alb.id
   security_group_id        = aws_security_group.web.id
-}
-
-resource "aws_security_group_rule" "web_ssh" { # EC2(web server) 的 Security Group 規則，允許 SSH 流量
-  type              = "ingress"
-  from_port         = 22
-  to_port           = 22
-  protocol          = "tcp"
-  cidr_blocks       = [var.admin_cidr]
-  security_group_id = aws_security_group.web.id
 }
 
 resource "aws_security_group_rule" "web_egress" { # EC2(web server) 的 Security Group 規則，允許出站流量

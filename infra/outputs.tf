@@ -14,13 +14,13 @@
 # 依來源分組：
 # [ network.tf ] ──► (VPC ID、四個 subnet ID、web 與 db 的 security group ID)
 # [ alb.tf ] ──► (ALB 的 DNS 名稱、ACM 憑證 ARN)
-# [ compute.tf ] ──► (EC2 的 ID 與 IP、RDS 的位址與資料庫名稱、key pair 名稱、私鑰檔路徑)
+# [ compute.tf ] ──► (EC2 的 ID 與 IP、RDS 的位址與資料庫名稱)
 # [ monitoring.tf ] ──► (兩個 log group 名稱、alarm 名稱、SNS topic ARN、dashboard 網址)
 # [ agent.tf ] ──► (investigation group ARN)
 #
 # 組合成可直接複製使用的字串：
 # [ wordpress_url ] ──► (用瀏覽器開啟 WordPress)
-# [ ssh_command ] ──► (SSH 登入 EC2)
+# [ ssm_command ] ──► (以 SSM Session Manager 登入 EC2)
 # [ fault_inject_command ] ──► (移除 db SG 的 3306 規則，重現「DB 連不上」的故障)
 # [ fault_probe_command ] ──► (送出請求並印出 HTTP 狀態碼，確認故障是否發生)
 
@@ -84,17 +84,6 @@ output "db_name" {
   value       = aws_db_instance.yiweee.db_name
 }
 
-output "key_pair_name" {
-  description = "The name of the key pair for SSH access"
-  value       = aws_key_pair.yiweee.key_name
-}
-
-output "private_key_file" {
-  description = "The path to the private key file"
-  value       = local_file.yiweee_key.filename
-  sensitive   = true
-}
-
 output "wordpress_url" {
   description = "URL to access WordPress (HTTPS via ALB)"
   value       = "https://${var.domain_name}"
@@ -115,9 +104,9 @@ output "http_redirect_command" {
   value       = "curl -sI http://${var.domain_name}/"
 }
 
-output "ssh_command" {
-  description = "SSH command to connect to the web server"
-  value       = "ssh -i ${local_file.yiweee_key.filename} ubuntu@${aws_instance.web.public_ip}"
+output "ssm_command" {
+  description = "SSM Session Manager command to connect to the web server"
+  value       = "aws ssm start-session --target ${aws_instance.web.id} --region ${var.aws_region} --profile ${var.profile}"
 }
 
 output "apache_access_log_group" {

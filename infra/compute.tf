@@ -3,12 +3,6 @@
 # ========================================
 
 # === 資源關係流程（各資源如何組成 EC2）===
-# 金鑰：
-# [ tls_private_key ] ──► [ local_file ] (私鑰存成本機 yiweee.pem)
-#        │
-#        ▼ (公鑰上傳到 AWS)
-# [ aws_key_pair ] ──► (給 EC2：SSH 登入金鑰)
-#
 # 權限：
 # [ aws_iam_role ] ◄── [ aws_iam_role_policy_attachment ] (ssm_access、cloudwatch_agent：把政策附加到 Role)
 #        │
@@ -30,24 +24,6 @@
 #        │
 #        ▼ (執行期：WordPress 讀寫資料)
 # [ aws_db_instance ]
-
-# === EC2 SSH 金鑰對 ===
-resource "tls_private_key" "yiweee" { # 生成一個 4096 位元的 RSA 私鑰
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-resource "aws_key_pair" "yiweee" { # 將 tls_private_key 生成的公鑰上傳到 AWS，建立一個 Key Pair
-  key_name   = "yiweee"
-  public_key = tls_private_key.yiweee.public_key_openssh
-}
-
-resource "local_file" "yiweee_key" { # 將 tls_private_key 生成的私鑰寫入本地檔案
-  content              = tls_private_key.yiweee.private_key_pem
-  filename             = "${path.module}/yiweee.pem"
-  file_permission      = "0600"
-  directory_permission = "0700"
-}
 
 # === 取得 Ubuntu AMI ===
 data "aws_ami" "ubuntu" { # 取得最新的 Ubuntu 22.04 LTS AMI
@@ -72,7 +48,6 @@ resource "aws_instance" "web" { # 建立 WordPress EC2 instance
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = aws_subnet.public_1a.id
-  key_name               = aws_key_pair.yiweee.key_name
   vpc_security_group_ids = [aws_security_group.web.id]
   user_data = base64encode(templatefile("${path.module}/user_data.sh", {
     db_name            = aws_db_instance.yiweee.db_name

@@ -8,15 +8,13 @@
 #        ▼ (terraform init 時下載)
 # [ aws ] ──► (負責 aws_* 資源：本專案絕大多數的 AWS 資源)
 # [ awscc ] ──► (負責 awscc_* 資源：agent.tf 的 investigation group)
-# [ tls ] ──► (負責 tls_private_key：compute.tf 產生 SSH 金鑰)
-# [ local ] ──► (負責 local_file：compute.tf 把私鑰寫成本機檔案)
 # [ time ] ──► (負責 time_sleep：agent.tf 等待 IAM Role 生效)
 # [ cloudflare ] ──► (負責 cloudflare_record：alb.tf 建立 ACM 驗證與網站的 DNS 記錄)
 #
 # [ provider "aws" / provider "awscc" ] ──► (設定 region 與 profile，決定連到哪個帳號的哪個區域)
 # [ provider "cloudflare" ] ──► (以 API token 連到 Cloudflare，token 來自 tfvars)
 # [ provider "aws" 的 default_tags ] ──► (替所有 aws_* 資源加上 Project 標籤)
-# tls、local 與 time 只在本機運作，不需要 provider 區塊
+# time 只在本機運作，不需要 provider 區塊
 
 terraform {
   required_version = ">= 1.0"
@@ -25,14 +23,6 @@ terraform {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
-    }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
-    local = {
-      source  = "hashicorp/local"
-      version = "~> 2.0"
     }
     awscc = { # aws provider 尚未支援 CloudWatch investigations，改用 Cloud Control 版本
       source  = "hashicorp/awscc"

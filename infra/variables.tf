@@ -13,7 +13,7 @@
 #
 # 依用途分組：
 # [ 連線設定 ] ──► (provider.tf：連到哪個 region、用哪個 AWS CLI profile)
-# [ 網路設定 ] ──► (network.tf：VPC 與 subnet 的 CIDR、可 SSH 的維護人員 IP)
+# [ 網路設定 ] ──► (network.tf：VPC 與 subnet 的 CIDR)
 # [ 網域與 HTTPS 設定 ] ──► (alb.tf：網域名稱、Cloudflare API token)
 # [ EC2 / RDS 設定 ] ──► (compute.tf：機型、儲存空間、兩組資料庫密碼)
 # [ 監控與告警設定 ] ──► (monitoring.tf：告警信箱、日誌保留天數)
@@ -54,11 +54,6 @@ variable "private_subnet_1a_cidr" {
 
 variable "private_subnet_1c_cidr" {
   description = "CIDR block for private subnet (1c)"
-  type        = string
-}
-
-variable "admin_cidr" {
-  description = "Admin's public IP in CIDR format, e.g. 203.0.113.10/32"
   type        = string
 }
 
