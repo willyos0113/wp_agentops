@@ -17,7 +17,7 @@
 
 ## [p1] 封面(cover)
 
-- 主標題: Taiwan Sip | 啜飲台灣 手搖飲料網路商店
+- 主標題: Taiwan Sip | 啜飲台灣手搖飲料網路商店
 - 副標題: 以 Web/DB 分離與 CloudWatch 自動調查，打造安全、省人力的 WordPress 平台
 - 資訊列: 共三行、置中，只放內容，不顯示「班級」「座號」「姓名」「日期」等標籤；班級、座號、姓名讀取 `slides/secrets/profile.txt`
   - 第一行: 班級
@@ -104,7 +104,7 @@
 - 資料庫選 RDS：每月多約 12USD，省下維運人力
   - RDS 託管 MySQL(db.t3.micro，20G): 每月 21.74USD，備份、修補、還原由 AWS 處理。
   - EC2 自建 MySQL(t3.micro): 每月 9.93USD，備份、修補、還原要自己處理。
-    (Fig9. 自建 vs RDS 比較表，只放兩列: 「月費」與「備份、修補、還原」。後者三項內容相同，併成一列，不要拆開，也不要另外加「所需人力」列)
+    (Fig9. 自建 vs RDS 比較表，欄為「EC2 自建 MySQL(t3.micro)」「RDS 託管 MySQL(db.t3.micro，20G)」，只放兩列: 「月費」(每月 9.93USD / 每月 21.74USD)與「備份、修補、還原」(自己處理 / AWS 處理)。後者三項內容相同，併成一列，不要拆開，也不要另外加「所需人力」列)
     (screenshot2: AWS Pricing Calculator 試算結果，放在比較表下方作為價格出處，大小要能認出是試算結果)
 
 ## [p9] 實作 - 架構
@@ -112,8 +112,8 @@
 (本頁版面: 上半部放整體架構，下半部放監控流程，各配一個小標「整體架構」「監控流程」，不寫說明句子。兩張圖要連在一起: 從 Fig10 EC2 內的 CloudWatch Agent 往下拉一條線，穿出 VPC 接到 Fig11 的 Logs，線旁標「推送 log」，下方再用較淡的小字標「經 IAM role 授權」(說明這條線靠 EC2 的 IAM role 取得寫入權限，不是靠 VPC 網路關係)。要區分「裝在 EC2 上」與「AWS 託管服務」: Apache log、CloudWatch Agent 畫在 EC2 方框內，屬於 VPC；Logs 之後的元件畫在 CloudWatch 外框內，屬於 VPC 外的 AWS 服務)
 
 - 整體架構:
-  (Fig10. 架構圖1張: VPC、public/private subnet、EC2、RDS。EC2 方框內由上到下放兩個小方框「Apache log」「CloudWatch Agent」，中間一個向下小箭頭(Apache log → CloudWatch Agent)，這兩者是裝在 EC2 上的軟體。EC2 到 RDS 的箭頭上方標「SG: 3306」，兩個 subnet 之間要留空間，標籤不要壓在框線上)
-  (screenshot3: RDS 連線設定畫面的 "Internet access gateway: Disabled"，放在架構圖右側，並用綠框圈出這一行)
+  (Fig10. 架構圖1張: Internet、VPC、public/private subnet、ALB、EC2、RDS，節點名稱為「ALB / ACM 憑證」「EC2 (t3.micro) WordPress」「RDS MySQL (db.t3.micro)」。Internet → ALB → EC2 依序以箭頭相連，ALB 放在 public subnet 內，下方標「HTTPS 443」。EC2 方框內由上到下放兩個小方框「Apache log」「CloudWatch Agent」，中間一個向下小箭頭(Apache log → CloudWatch Agent)，這兩者是裝在 EC2 上的軟體。EC2 到 RDS 的箭頭上方標「SG: 3306」，兩個 subnet 之間要留空間，標籤不要壓在框線上)
+  (screenshot3: RDS 連線設定畫面的 "Internet access gateway: Disabled"，放在架構圖右側，並用綠框圈出這一行；截圖上方帶一行說明文字「RDS: Internet access gateway — Disabled」)
   (口頭補充，不放上投影片: VPC、public/private subnets、EC2、RDS，及監控流程)
 
 - 監控流程:
@@ -125,10 +125,10 @@
 - 故障演練示範: 移除 DB SG 的 3306 規則 → 網站 500 → Alarm 觸發 → 告警信與調查結果指出 SG 規則被移除 → terraform apply 還原 → 網站恢復。
   (Fig12. 演練流程圖: ① 移除 DB SG 3306 → ② 網站 500 → ③ Alarm 觸發 → 分岔 ④a 告警信 / ④b investigations 根因報告 → ⑤ terraform apply 還原 → ⑥ 網站恢復。p10、p11 共用此圖，兩頁都畫完整六步，截圖依編號對應。本頁講的 ① ~ ③ 上色，④ ~ ⑥ 的字和框用灰色淡化)
   (截圖標題要指出截圖裡的證據，不要只重複流程圖上的字。三張截圖的標題依序為「① 注入故障：移除 DB SG 的 3306 規則」「② 網站回傳 500」「③ 5xx 飆高，Alarm 觸發」)
-  (screenshot4: 對應 ①，終端機執行故障注入指令後的輸出，看得到被移除的 SG 規則。用亮綠框圈出 FromPort / ToPort 3306 那兩行，旁邊標「3306 規則被移除」)
-  (screenshot5: 對應 ②，終端機用 curl 取得網站狀態碼，回傳 500。用亮綠框圈出 500，旁邊標「回傳 500」)
+  (screenshot4: 對應 ①，終端機執行故障注入指令後的輸出，看得到被移除的 SG 規則。用亮綠框圈出 FromPort / ToPort 3306 那兩行，旁邊標「← 3306 規則被移除」)
+  (screenshot5: 對應 ②，終端機用 curl 取得網站狀態碼，回傳 500。用亮綠框圈出 500，旁邊標「← 回傳 500」)
   (screenshot6: 對應 ③，CloudWatch Alarm 進入 ALARM 狀態，含 5xx 指標飆高的圖。只留上半部有內容的區域，裁掉下方空白)
-  (Fig12-1. 偵測時間卡片，放在 screenshot6 下方: 大字「約 2 分鐘」，上方小標「故障到告警」，下方一行「12:17 移除規則 → 12:19 收到告警信」。這是 p6「1~2 分鐘告警信」的實測依據，時間照用，不要改寫)
+  (Fig12-1. 偵測時間卡片，放在 screenshot6 下方: 大字「約 2 分鐘」，上方小標「故障到告警」，下方一行「13:22 移除規則 → 13:24 收到告警信」。這是 p6「1~2 分鐘告警信」的實測依據，時間照用，不要改寫)
 
 ## [p11] 實作 - 故障演練(2/2): 調查與還原
 
@@ -148,7 +148,7 @@
 - 結論(大字): AI 能查，不能改
   (Fig13. 權限邊界圖，要真的畫成圖，不要只列文字: 左邊一個「investigations role」方框(指 CloudWatch investigations 擔任的 IAM role，用詞對應 p9 Fig11 的「investigations」；不要寫成「Agent role」，避免和 p9 的 CloudWatch Agent 混淆)，往右三條綠色箭頭標「讀取」，分別指向 Logs、RDS 指標、CloudTrail 三個方框；另一條紅色路徑指向「修改資源」方框，路徑上用和 p5、p6 相同的紅圈打叉)
   (圖下方放兩個小標籤，當補充不當主角: 「全部用 IAM role」「沒有長期金鑰」)
-  (screenshot11: 調查 Agent 掛的 AWS 受管政策 `AIOpsAssistantPolicy` 的內容。用亮綠框圈出政策說明裡的 "Provides ReadOnly permissions"，再圈出 Action 清單，旁邊標「全是 Get / List / Describe」)
+  (screenshot11: 調查 Agent 掛的 AWS 受管政策 `AIOpsAssistantPolicy` 的內容。用亮綠框圈出政策說明裡的 "Provides ReadOnly permissions"，再圈出 Action 清單，旁邊標「← 全是 Get / List / Describe」)
   (口頭補充，不放上投影片: 調查 Agent 只讀不改、全部用 IAM role、沒有新增長期金鑰。這頁回答的是「讓 AI 查系統會不會多開一個洞」，呼應 p4 的安全性問題: 解決人力問題時沒有犧牲安全)
 
 ## [p13] Takeaway

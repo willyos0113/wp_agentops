@@ -43,8 +43,10 @@ desktop.ini
 .idea/
 
 # 簡報素材：截圖與機密資料留在本機，其餘納入版控
-slides/screenshots/
-slides/secrets/
+slides/screenshots/*
+!slides/screenshots/.gitkeep
+slides/secrets/*
+!slides/secrets/.gitkeep
 
 # 練習用截圖留在本機
 practice/screenshots/
